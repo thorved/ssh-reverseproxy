@@ -32,6 +32,4 @@ go.work.sum
 # Editor/IDE
 # .idea/
 # .vscode/
-mapping.json
-ssh-reverseproxy
 ssh

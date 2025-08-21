@@ -22,19 +22,13 @@ Quick start with .env
 Environment variables
 - SSH_PORT or SSH_LISTEN_ADDR: listen port/address (default :2222)
 - SSH_HOST_KEY_PATH: path to server host key (PEM/OpenSSH). If unset, an ephemeral Ed25519 key is generated in memory — this changes on each restart and will trigger "REMOTE HOST IDENTIFICATION HAS CHANGED!" on clients.
-- SSH_MAPPING_FILE: path to JSON key-to-target mapping (default mapping.json)
- SSH_ACCEPT_UNKNOWN_UPSTREAM: if true, when an upstream host key is unknown, the proxy will automatically learn it (append to SSH_KNOWN_HOSTS) and retry once. Default false.
+- SSH_KNOWN_HOSTS: path to known_hosts file used to verify upstream server host keys. If unset, verification is disabled (not recommended).
+- SSH_ACCEPT_UNKNOWN_UPSTREAM: if true, when an upstream host key is unknown, the proxy will automatically learn it (append to SSH_KNOWN_HOSTS) and retry once. Default false.
+- SSH_DB_DSN: Postgres connection string (required)
+- SSH_DB_TABLE: table name (default proxy_mappings)
 
-Mapping file structure (see mapping.example.json)
-{
-	"entries": [
- 
- Auto-learning unknown upstream keys
- Set SSH_ACCEPT_UNKNOWN_UPSTREAM=true to enable "accept-new" behavior. When the upstream's host key is unknown, the proxy captures it, appends it to SSH_KNOWN_HOSTS, and retries once. Use with caution and only in trusted networks.
-		{ "publicKey": "ssh-ed25519 AAAA... comment", "target": { "addr": "host:22", "user": "ubuntu", "auth": { "method": "none" } } },
-		{ "fingerprint": "SHA256:...", "target": { "addr": "host:22", "user": "ec2-user", "auth": { "method": "key", "keyPath": "./id_ed25519", "passphrase": "" } } }
-	]
-}
+Auto-learning unknown upstream keys
+Set SSH_ACCEPT_UNKNOWN_UPSTREAM=true to enable "accept-new" behavior. When the upstream's host key is unknown, the proxy captures it, appends it to SSH_KNOWN_HOSTS, and retries once. Use with caution and only in trusted networks.
 
 Match rules
 - If fingerprint is set, it must match ssh.FingerprintSHA256 of the client's key (format like SHA256:abc...)
@@ -42,7 +36,30 @@ Match rules
 
 Upstream auth
 - method: one of none | password | key
-- key method uses keyPath (relative paths resolved from CWD) and optional passphrase
+- For key method: provide keyInline (PEM/OpenSSH private key contents from DB) and optional passphrase
+
+Database mapping schema (example)
+Create a table like this (or adapt a view) to be read when SSH_MAPPING_SOURCE=db and SSH_DB_DSN is set:
+
+Columns used (nullable unless stated):
+- public_key text
+- fingerprint text
+- addr text NOT NULL
+- user_name text NOT NULL
+- auth_method text NOT NULL  -- one of none|password|key
+- auth_password text
+- auth_key_path text
+- auth_key_inline text
+- auth_passphrase text
+- enabled boolean DEFAULT true
+
+Only rows with enabled=true (or NULL) are loaded.
+
+Quick start (DB-only)
+- Set SSH_DB_DSN and (optionally) SSH_DB_TABLE
+- Set SSH_HOST_KEY_PATH to persist the proxy's host key
+- Optionally set SSH_KNOWN_HOSTS and SSH_ACCEPT_UNKNOWN_UPSTREAM
+- Run the binary or Docker image
 
 ## Build and run
 

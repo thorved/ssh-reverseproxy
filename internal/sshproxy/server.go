@@ -1,7 +1,7 @@
-package main
+package sshproxy
 
 import (
-	"bufio"
+	"context"
 	"crypto/ed25519"
 	"crypto/rand"
 	"crypto/x509"
@@ -18,60 +18,24 @@ import (
 	"strings"
 	"time"
 
-	"github.com/joho/godotenv"
 	"golang.org/x/crypto/ssh"
 	"golang.org/x/crypto/ssh/knownhosts"
+
+	cfgpkg "ssh-reverseproxy/internal/config"
+	maptypes "ssh-reverseproxy/internal/mapping"
 )
-
-// Mapping holds a list of entries mapping client public keys to upstream targets
-// Example file structure is in mapping.example.json
-// {"entries": [{"publicKey":"ssh-ed25519 AAAA... comment","target":{...}}]}
-// You can also match by fingerprint: {"fingerprint":"SHA256:..."}
-// Fingerprint uses ssh.FingerprintSHA256 format.
-
-type Mapping struct {
-	Entries []MappingEntry `json:"entries"`
-}
-
-type MappingEntry struct {
-	PublicKey   string         `json:"publicKey,omitempty"`
-	Fingerprint string         `json:"fingerprint,omitempty"`
-	Target      UpstreamTarget `json:"target"`
-}
-
-type UpstreamTarget struct {
-	Addr string `json:"addr"` // host:port
-	User string `json:"user"`
-	Auth struct {
-		Method     string `json:"method"` // none | password | key
-		Password   string `json:"password,omitempty"`
-		KeyPath    string `json:"keyPath,omitempty"`
-		Passphrase string `json:"passphrase,omitempty"`
-	} `json:"auth"`
-}
 
 const permTargetKey = "proxy.target.json.b64"
 
-func main() {
-	// Load environment variables from a local .env file if present
-	// (ignored if the file does not exist)
-	_ = godotenv.Load()
-
-	cfg := mustLoadConfig()
-
-	mapping, err := loadMapping(cfg.mappingPath)
+// Run starts the proxy server and blocks.
+func Run(cfg cfgpkg.ServerConfig, mapping maptypes.Mapping) error {
+	hostSigner, err := loadOrGenerateHostKey(cfg.HostKeyPath)
 	if err != nil {
-		log.Fatalf("failed to load mapping: %v", err)
-	}
-
-	hostSigner, err := loadOrGenerateHostKey(cfg.hostKeyPath)
-	if err != nil {
-		log.Fatalf("failed to load host key: %v", err)
+		return fmt.Errorf("load host key: %w", err)
 	}
 
 	srvConf := &ssh.ServerConfig{
 		PublicKeyCallback: func(connMeta ssh.ConnMetadata, key ssh.PublicKey) (*ssh.Permissions, error) {
-			// Map key to target
 			tgt, ok := findTarget(mapping, key)
 			if !ok {
 				return nil, errors.New("unauthorized public key")
@@ -81,157 +45,57 @@ func main() {
 				permTargetKey: base64.StdEncoding.EncodeToString(b),
 			}}, nil
 		},
-		ServerVersion: cfg.serverIdent,
+		ServerVersion: cfg.ServerIdent,
+	}
+	srvConf.AuthLogCallback = func(connMeta ssh.ConnMetadata, method string, err error) {
+		if err != nil {
+			log.Printf("auth failed: user=%s from=%s method=%s err=%v", connMeta.User(), connMeta.RemoteAddr(), method, err)
+		}
 	}
 	srvConf.AddHostKey(hostSigner)
 
-	ln, err := net.Listen("tcp", cfg.listenAddr)
+	ln, err := net.Listen("tcp", cfg.ListenAddr)
 	if err != nil {
-		log.Fatalf("listen %s: %v", cfg.listenAddr, err)
+		return fmt.Errorf("listen %s: %w", cfg.ListenAddr, err)
 	}
-	log.Printf("ssh-reverseproxy listening on %s", cfg.listenAddr)
+	log.Printf("ssh-reverseproxy listening on %s", cfg.ListenAddr)
+
+	// Optional: background mapping reload from DB if interval > 0 and DB configured
+	if cfg.DBDSN != "" && cfg.DBRefreshInterval > 0 {
+		log.Printf("mapping auto-reload enabled (every %s)", cfg.DBRefreshInterval)
+		go func() {
+			ticker := time.NewTicker(cfg.DBRefreshInterval)
+			defer ticker.Stop()
+			for range ticker.C {
+				ctx, cancel := context.WithTimeout(context.Background(), cfg.DBTimeout)
+				m, err := maptypes.LoadFromDB(ctx, cfg.DBDSN, cfg.DBTable)
+				cancel()
+				if err != nil {
+					log.Printf("mapping reload failed: %v", err)
+					continue
+				}
+				// Replace in-memory mapping atomically by swapping the slice
+				mapping = m
+				log.Printf("mapping reloaded: %d entries", len(mapping.Entries))
+			}
+		}()
+	}
 
 	for {
 		conn, err := ln.Accept()
 		if err != nil {
-			if ne, ok := err.(net.Error); ok && ne.Temporary() {
-				log.Printf("accept temp err: %v", err)
+			if ne, ok := err.(net.Error); ok && ne.Timeout() {
+				log.Printf("accept timeout: %v", err)
 				time.Sleep(100 * time.Millisecond)
 				continue
 			}
-			log.Printf("accept error: %v", err)
-			return
+			return fmt.Errorf("accept: %w", err)
 		}
 		go handleConn(conn, srvConf, cfg)
 	}
 }
 
-type serverConfig struct {
-	listenAddr            string
-	hostKeyPath           string
-	mappingPath           string
-	knownHosts            string
-	serverIdent           string
-	dialTimeout           time.Duration
-	acceptUnknownUpstream bool
-}
-
-func mustLoadConfig() serverConfig {
-	addr := getenvDefault("SSH_LISTEN_ADDR", "")
-	port := getenvDefault("SSH_PORT", "")
-	if addr == "" {
-		if port == "" {
-			addr = ":2222"
-		} else {
-			addr = ":" + port
-		}
-	}
-
-	return serverConfig{
-		listenAddr:            addr,
-		hostKeyPath:           os.Getenv("SSH_HOST_KEY_PATH"),
-		mappingPath:           getenvDefault("SSH_MAPPING_FILE", "mapping.json"),
-		knownHosts:            os.Getenv("SSH_KNOWN_HOSTS"),
-		serverIdent:           getenvDefault("SSH_SERVER_IDENT", "SSH-2.0-ssh-reverseproxy"),
-		dialTimeout:           15 * time.Second,
-		acceptUnknownUpstream: getenvBool("SSH_ACCEPT_UNKNOWN_UPSTREAM", false),
-	}
-}
-
-func getenvDefault(k, def string) string {
-	if v := os.Getenv(k); v != "" {
-		return v
-	}
-	return def
-}
-
-func getenvBool(k string, def bool) bool {
-	v := strings.TrimSpace(strings.ToLower(os.Getenv(k)))
-	if v == "" {
-		return def
-	}
-	switch v {
-	case "1", "true", "yes", "on":
-		return true
-	case "0", "false", "no", "off":
-		return false
-	default:
-		return def
-	}
-}
-
-func loadMapping(path string) (Mapping, error) {
-	f, err := os.Open(path)
-	if err != nil {
-		return Mapping{}, err
-	}
-	defer f.Close()
-	var m Mapping
-	dec := json.NewDecoder(bufio.NewReader(f))
-	if err := dec.Decode(&m); err != nil {
-		return Mapping{}, err
-	}
-	for i := range m.Entries {
-		m.Entries[i].PublicKey = strings.TrimSpace(m.Entries[i].PublicKey)
-		m.Entries[i].Fingerprint = strings.TrimSpace(m.Entries[i].Fingerprint)
-	}
-	return m, nil
-}
-
-func loadOrGenerateHostKey(path string) (ssh.Signer, error) {
-	if path != "" {
-		b, err := os.ReadFile(path)
-		if err != nil {
-			if errors.Is(err, os.ErrNotExist) {
-				// Ensure directory exists
-				if dir := filepath.Dir(path); dir != "." && dir != "" {
-					if mkErr := os.MkdirAll(dir, 0o700); mkErr != nil {
-						return nil, fmt.Errorf("create host key dir %s: %w", dir, mkErr)
-					}
-				}
-				// Generate a new ed25519 key and persist it in PKCS#8 PEM format
-				_, priv, gErr := ed25519.GenerateKey(rand.Reader)
-				if gErr != nil {
-					return nil, gErr
-				}
-				der, mErr := x509.MarshalPKCS8PrivateKey(priv)
-				if mErr != nil {
-					return nil, fmt.Errorf("marshal host key: %w", mErr)
-				}
-				pemBlock := &pem.Block{Type: "PRIVATE KEY", Bytes: der}
-				pemBytes := pem.EncodeToMemory(pemBlock)
-				if wErr := os.WriteFile(path, pemBytes, 0o600); wErr != nil {
-					return nil, fmt.Errorf("write host key %s: %w", path, wErr)
-				}
-				log.Printf("generated new ed25519 host key at %s", path)
-				signer, sErr := ssh.NewSignerFromKey(priv)
-				if sErr != nil {
-					return nil, sErr
-				}
-				return signer, nil
-			}
-			return nil, fmt.Errorf("read host key %s: %w", path, err)
-		}
-		signer, err := ssh.ParsePrivateKey(b)
-		if err != nil {
-			return nil, fmt.Errorf("parse host key: %w", err)
-		}
-		return signer, nil
-	}
-	// generate ephemeral ed25519 key
-	_, priv, err := ed25519.GenerateKey(rand.Reader)
-	if err != nil {
-		return nil, err
-	}
-	signer, err := ssh.NewSignerFromKey(priv)
-	if err != nil {
-		return nil, err
-	}
-	log.Printf("using ephemeral in-memory host key (set SSH_HOST_KEY_PATH to use a persistent key)")
-	return signer, nil
-}
-
-func findTarget(m Mapping, key ssh.PublicKey) (UpstreamTarget, bool) {
+func findTarget(m maptypes.Mapping, key ssh.PublicKey) (maptypes.Target, bool) {
 	fp := ssh.FingerprintSHA256(key)
 	for _, e := range m.Entries {
 		if e.Fingerprint != "" && e.Fingerprint == fp {
@@ -261,15 +125,15 @@ func findTarget(m Mapping, key ssh.PublicKey) (UpstreamTarget, bool) {
 			return e.Target, true
 		}
 	}
-	return UpstreamTarget{}, false
+	return maptypes.Target{}, false
 }
 
-func handleConn(nc net.Conn, srvConf *ssh.ServerConfig, cfg serverConfig) {
+func handleConn(nc net.Conn, srvConf *ssh.ServerConfig, cfg cfgpkg.ServerConfig) {
 	defer nc.Close()
 	serverConn, chans, reqs, err := ssh.NewServerConn(nc, srvConf)
 	if err != nil {
 		if !strings.Contains(err.Error(), "unauthorized public key") {
-			log.Printf("handshake error from %s: %v", nc.RemoteAddr(), err)
+			log.Printf("handshake error from %s: %s", nc.RemoteAddr(), describeHandshakeError(err))
 		}
 		return
 	}
@@ -290,7 +154,7 @@ func handleConn(nc net.Conn, srvConf *ssh.ServerConfig, cfg serverConfig) {
 		log.Printf("decode target: %v", err)
 		return
 	}
-	var target UpstreamTarget
+	var target maptypes.Target
 	if err := json.Unmarshal(data, &target); err != nil {
 		log.Printf("unmarshal target: %v", err)
 		return
@@ -314,14 +178,13 @@ func handleConn(nc net.Conn, srvConf *ssh.ServerConfig, cfg serverConfig) {
 	}
 }
 
-func dialUpstream(t UpstreamTarget, cfg serverConfig) (*ssh.Client, error) {
+func dialUpstream(t maptypes.Target, cfg cfgpkg.ServerConfig) (*ssh.Client, error) {
 	var hostKeyCallback ssh.HostKeyCallback
-	if cfg.knownHosts != "" {
-		// Ensure known_hosts file exists if a path is provided
-		if err := ensureFile(cfg.knownHosts, 0o644); err != nil {
+	if cfg.KnownHosts != "" {
+		if err := ensureFile(cfg.KnownHosts, 0o644); err != nil {
 			return nil, fmt.Errorf("prepare known_hosts: %w", err)
 		}
-		kh, err := knownhosts.New(cfg.knownHosts)
+		kh, err := knownhosts.New(cfg.KnownHosts)
 		if err != nil {
 			return nil, fmt.Errorf("load known_hosts: %w", err)
 		}
@@ -336,28 +199,19 @@ func dialUpstream(t UpstreamTarget, cfg serverConfig) (*ssh.Client, error) {
 	case "password":
 		authMethods = append(authMethods, ssh.Password(t.Auth.Password))
 	case "key":
-		keyPath := t.Auth.KeyPath
-		if keyPath == "" {
-			return nil, errors.New("key auth selected but keyPath empty")
-		}
-		abs := keyPath
-		if !filepath.IsAbs(abs) {
-			if wd, err := os.Getwd(); err == nil {
-				abs = filepath.Join(wd, keyPath)
-			}
-		}
-		keyBytes, err := os.ReadFile(abs)
-		if err != nil {
-			return nil, fmt.Errorf("read key %s: %w", abs, err)
+		keyBytes := []byte(t.Auth.KeyInline)
+		if len(keyBytes) == 0 {
+			return nil, errors.New("key auth selected but keyInline is empty (DB-only mode)")
 		}
 		var signer ssh.Signer
+		var err error
 		if t.Auth.Passphrase != "" {
 			signer, err = ssh.ParsePrivateKeyWithPassphrase(keyBytes, []byte(t.Auth.Passphrase))
 		} else {
 			signer, err = ssh.ParsePrivateKey(keyBytes)
 		}
 		if err != nil {
-			return nil, fmt.Errorf("parse key %s: %w", abs, err)
+			return nil, fmt.Errorf("parse key: %w", err)
 		}
 		authMethods = append(authMethods, ssh.PublicKeys(signer))
 	case "none", "":
@@ -370,20 +224,18 @@ func dialUpstream(t UpstreamTarget, cfg serverConfig) (*ssh.Client, error) {
 		User:            t.User,
 		Auth:            authMethods,
 		HostKeyCallback: hostKeyCallback,
-		Timeout:         cfg.dialTimeout,
+		Timeout:         cfg.DialTimeout,
 	}
 
 	client, err := ssh.Dial("tcp", t.Addr, clientConf)
 	if err == nil {
 		return client, nil
 	}
-	// If host key is unknown and policy allows, learn it and retry once
-	if cfg.knownHosts != "" && cfg.acceptUnknownUpstream && strings.Contains(err.Error(), "knownhosts: key is unknown") {
-		if ferr := fetchAndAppendHostKey(t.Addr, cfg.knownHosts, cfg.dialTimeout); ferr != nil {
+	if cfg.KnownHosts != "" && cfg.AcceptUnknownUpstream && strings.Contains(err.Error(), "knownhosts: key is unknown") {
+		if ferr := fetchAndAppendHostKey(t.Addr, cfg.KnownHosts, cfg.DialTimeout); ferr != nil {
 			return nil, fmt.Errorf("upstream host key unknown and could not fetch: %w", ferr)
 		}
-		// Rebuild the callback after updating the file
-		kh, khErr := knownhosts.New(cfg.knownHosts)
+		kh, khErr := knownhosts.New(cfg.KnownHosts)
 		if khErr != nil {
 			return nil, fmt.Errorf("reload known_hosts: %w", khErr)
 		}
@@ -445,7 +297,6 @@ func proxyChannel(newCh ssh.NewChannel, upstream *ssh.Client) error {
 		errc <- e
 	}()
 
-	// Wait for both directions to complete to avoid half-closed hangs
 	<-errc
 	<-errc
 	return nil
@@ -463,8 +314,6 @@ func forwardRequests(in <-chan *ssh.Request, out ssh.Channel) {
 	}
 }
 
-// ensureFile creates the file and its parent directory if they do not exist.
-// If the file exists, it's left untouched.
 func ensureFile(path string, perm os.FileMode) error {
 	if path == "" {
 		return nil
@@ -488,21 +337,36 @@ func ensureFile(path string, perm os.FileMode) error {
 	return nil
 }
 
-// fetchAndAppendHostKey dials the target with a permissive callback to capture
-// its host key, appends it to known_hosts, and returns.
+func describeHandshakeError(err error) string {
+	if err == nil {
+		return ""
+	}
+	s := err.Error()
+	switch {
+	case strings.Contains(s, "connection reset"):
+		return s + " (peer closed the connection during handshake)"
+	case strings.Contains(s, "no common algorithms"):
+		return s + " (mismatch in key/cipher/MAC algorithms)"
+	case strings.Contains(s, "unauthorized public key"):
+		return s + " (client key not present in mapping)"
+	case strings.Contains(s, "unexpected message type"):
+		return s + " (client speaking non-SSH or incompatible SSH version)"
+	default:
+		return s
+	}
+}
+
 func fetchAndAppendHostKey(addr string, knownHostsPath string, timeout time.Duration) error {
 	var captured ssh.PublicKey
 	cfg := &ssh.ClientConfig{
-		User: "unknown", // not used; auth will fail after handshake which is fine
+		User: "unknown",
 		HostKeyCallback: func(hostname string, remote net.Addr, key ssh.PublicKey) error {
 			captured = key
-			return nil // accept for the purpose of capture
+			return nil
 		},
 		Timeout: timeout,
 	}
-	// Intentionally no auth methods
-	// Perform a dial to trigger key exchange and callback
-	_, _ = ssh.Dial("tcp", addr, cfg) // error is expected due to auth, ignore
+	_, _ = ssh.Dial("tcp", addr, cfg)
 	if captured == nil {
 		return fmt.Errorf("could not capture host key from %s", addr)
 	}
@@ -523,17 +387,14 @@ func fetchAndAppendHostKey(addr string, knownHostsPath string, timeout time.Dura
 	return nil
 }
 
-// normalizeKnownHostsHost converts host:port to known_hosts pattern format.
-// For non-22 port it returns "[host]:port", otherwise just host.
 func normalizeKnownHostsHost(addr string) string {
 	host, port, err := net.SplitHostPort(addr)
 	if err != nil {
-		return addr // already normalized or missing port
+		return addr
 	}
 	if port == "22" {
 		return host
 	}
-	// IPv6 already contains ':', known_hosts requires [host]:port
 	if strings.Contains(host, ":") && !strings.HasPrefix(host, "[") {
 		host = "[" + host + "]"
 	}
@@ -541,4 +402,54 @@ func normalizeKnownHostsHost(addr string) string {
 		host = "[" + host + "]"
 	}
 	return host + ":" + port
+}
+
+func loadOrGenerateHostKey(path string) (ssh.Signer, error) {
+	if path != "" {
+		b, err := os.ReadFile(path)
+		if err != nil {
+			if errors.Is(err, os.ErrNotExist) {
+				if dir := filepath.Dir(path); dir != "." && dir != "" {
+					if mkErr := os.MkdirAll(dir, 0o700); mkErr != nil {
+						return nil, fmt.Errorf("create host key dir %s: %w", dir, mkErr)
+					}
+				}
+				_, priv, gErr := ed25519.GenerateKey(rand.Reader)
+				if gErr != nil {
+					return nil, gErr
+				}
+				der, mErr := x509.MarshalPKCS8PrivateKey(priv)
+				if mErr != nil {
+					return nil, fmt.Errorf("marshal host key: %w", mErr)
+				}
+				pemBlock := &pem.Block{Type: "PRIVATE KEY", Bytes: der}
+				pemBytes := pem.EncodeToMemory(pemBlock)
+				if wErr := os.WriteFile(path, pemBytes, 0o600); wErr != nil {
+					return nil, fmt.Errorf("write host key %s: %w", path, wErr)
+				}
+				log.Printf("generated new ed25519 host key at %s", path)
+				signer, sErr := ssh.NewSignerFromKey(priv)
+				if sErr != nil {
+					return nil, sErr
+				}
+				return signer, nil
+			}
+			return nil, fmt.Errorf("read host key %s: %w", path, err)
+		}
+		signer, err := ssh.ParsePrivateKey(b)
+		if err != nil {
+			return nil, fmt.Errorf("parse host key: %w", err)
+		}
+		return signer, nil
+	}
+	_, priv, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		return nil, err
+	}
+	signer, err := ssh.NewSignerFromKey(priv)
+	if err != nil {
+		return nil, err
+	}
+	log.Printf("using ephemeral in-memory host key (set SSH_HOST_KEY_PATH to use a persistent key)")
+	return signer, nil
 }

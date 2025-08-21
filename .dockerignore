@@ -1,0 +1,13 @@
+# Build artifacts
+/out
+/bin
+
+# VCS
+.git
+.gitignore
+
+# Local configs and keys (mount at runtime instead)
+.env
+ssh/
+*.pem
+id_* 
