@@ -19,6 +19,7 @@ import (
 
 	"github.com/thorved/ssh-reverseproxy/backend/internal/config"
 	"github.com/thorved/ssh-reverseproxy/backend/internal/models"
+	"github.com/thorved/ssh-reverseproxy/backend/internal/sshkeys"
 	"golang.org/x/crypto/ssh"
 	"golang.org/x/crypto/ssh/knownhosts"
 	"gorm.io/gorm"
@@ -205,12 +206,7 @@ func (s *Server) dialUpstream(target *upstreamTarget) (*ssh.Client, error) {
 		if strings.TrimSpace(target.KeyInline) == "" {
 			return nil, errors.New("key auth selected but instance auth_key_inline is empty")
 		}
-		var signer ssh.Signer
-		if target.Passphrase != "" {
-			signer, err = ssh.ParsePrivateKeyWithPassphrase([]byte(target.KeyInline), []byte(target.Passphrase))
-		} else {
-			signer, err = ssh.ParsePrivateKey([]byte(target.KeyInline))
-		}
+		signer, err := sshkeys.SignerFromPrivateKey(target.KeyInline, target.Passphrase)
 		if err != nil {
 			return nil, fmt.Errorf("parse upstream private key: %w", err)
 		}

@@ -43,29 +43,37 @@ func GeneratePrivateKeyPEM() (string, string, string, error) {
 }
 
 func PublicKeyFromPrivateKey(input, passphrase string) (string, error) {
+	signer, err := SignerFromPrivateKey(input, passphrase)
+	if err != nil {
+		return "", err
+	}
+	return PublicKeyFromSigner(signer), nil
+}
+
+func SignerFromPrivateKey(input, passphrase string) (ssh.Signer, error) {
 	trimmed := strings.TrimSpace(input)
 	if trimmed == "" {
-		return "", fmt.Errorf("ssh private key is required")
+		return nil, fmt.Errorf("ssh private key is required")
 	}
 
 	decoded, _ := pem.Decode([]byte(trimmed))
 	if decoded != nil && x509.IsEncryptedPEMBlock(decoded) {
 		if strings.TrimSpace(passphrase) == "" {
-			return "", fmt.Errorf("ssh private key is passphrase protected")
+			return nil, fmt.Errorf("ssh private key is passphrase protected")
 		}
 		der, err := x509.DecryptPEMBlock(decoded, []byte(passphrase))
 		if err != nil {
-			return "", fmt.Errorf("decrypt ssh private key: %w", err)
+			return nil, fmt.Errorf("decrypt ssh private key: %w", err)
 		}
 		privateKey, err := x509.ParsePKCS8PrivateKey(der)
 		if err != nil {
-			return "", fmt.Errorf("parse pkcs8 private key: %w", err)
+			return nil, fmt.Errorf("parse pkcs8 private key: %w", err)
 		}
 		signer, err := ssh.NewSignerFromKey(privateKey)
 		if err != nil {
-			return "", fmt.Errorf("create signer from private key: %w", err)
+			return nil, fmt.Errorf("create signer from private key: %w", err)
 		}
-		return PublicKeyFromSigner(signer), nil
+		return signer, nil
 	}
 
 	var (
@@ -78,10 +86,10 @@ func PublicKeyFromPrivateKey(input, passphrase string) (string, error) {
 		signer, err = ssh.ParsePrivateKey([]byte(trimmed))
 	}
 	if err != nil {
-		return "", fmt.Errorf("parse ssh private key: %w", err)
+		return nil, fmt.Errorf("parse ssh private key: %w", err)
 	}
 
-	return PublicKeyFromSigner(signer), nil
+	return signer, nil
 }
 
 func PublicKeyFromSigner(signer ssh.Signer) string {
