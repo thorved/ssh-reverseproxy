@@ -26,6 +26,11 @@ export type Instance = {
   updated_at: string;
 };
 
+export type UserInstancesResponse = {
+  instances: Instance[];
+  ssh_port: number;
+};
+
 export type SSHKey = {
   id: number;
   user_id: number;
@@ -39,8 +44,16 @@ export type SSHKey = {
   updated_at: string;
 };
 
+function getApiBaseUrl() {
+  return process.env.NEXT_PUBLIC_DEV_API_URL?.trim() ?? "";
+}
+
+export function getApiUrl(path: string) {
+  return `${getApiBaseUrl()}${path}`;
+}
+
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
-  const response = await fetch(path, {
+  const response = await fetch(getApiUrl(path), {
     ...init,
     credentials: "include",
     headers: {
@@ -95,7 +108,8 @@ export const api = {
       method: "POST",
       body: JSON.stringify({ user_id: userId }),
     }),
-  listUserInstances: () => request<Instance[]>("/api/user/instances"),
+  listUserInstances: () =>
+    request<UserInstancesResponse>("/api/user/instances"),
   listSSHKeys: () => request<SSHKey[]>("/api/user/ssh-keys"),
   createSSHKey: (payload: Record<string, unknown>) =>
     request<SSHKey>("/api/user/ssh-keys", {

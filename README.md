@@ -13,11 +13,14 @@ OIDC-secured SSH reverse proxy with a Go backend, Next.js frontend, SQLite stora
 
 ```text
 ssh-reverseproxy/
+├── .dockerignore
 ├── backend/
 │   ├── cmd/server
 │   ├── internal/{auth,config,database,handlers,middleware,models,proxy,routes,sshkeys}
 │   ├── .air.toml
 │   └── .env.example
+├── docker-compose.yml
+├── Dockerfile
 ├── frontend/
 │   ├── src/app
 │   ├── src/components
@@ -53,7 +56,22 @@ npm install
 npm run dev
 ```
 
-The frontend runs on `http://localhost:3000` and proxies `/api/*` to the Go backend using `BACKEND_URL`.
+The frontend runs on `http://localhost:3000` and talks to the Go backend using `NEXT_PUBLIC_DEV_API_URL`.
+
+## Production Deployment
+
+The production image builds the Next frontend as a static export, copies the exported files into the runtime image, and has the Go server serve both the frontend and `/api/*` from the same origin.
+
+```powershell
+docker compose up -d --build
+```
+
+Published ports:
+
+- HTTP UI + API: `http://localhost:8080`
+- SSH proxy: `:2222`
+
+Persistent data is mounted from `backend/data` to `/app/data` in the container.
 
 ## Required Backend Configuration
 
@@ -113,4 +131,11 @@ Frontend:
 cd frontend
 npm run lint
 npm run build
+```
+
+Docker:
+
+```powershell
+docker compose build
+docker compose up
 ```

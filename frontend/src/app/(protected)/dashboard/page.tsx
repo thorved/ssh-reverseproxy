@@ -8,6 +8,11 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { useAuth } from "@/contexts/auth-context";
 import { api } from "@/lib/api";
 
+function sshPattern(sshPort: number) {
+  const portSuffix = sshPort === 22 ? "" : ` -p ${sshPort}`;
+  return `ssh <instance-slug>@<proxy-host>${portSuffix}`;
+}
+
 export default function DashboardPage() {
   const { user } = useAuth();
   const instancesQuery = useQuery({
@@ -22,7 +27,7 @@ export default function DashboardPage() {
   const stats = [
     {
       label: "Assigned instances",
-      value: instancesQuery.data?.length ?? 0,
+      value: instancesQuery.data?.instances.length ?? 0,
       icon: MonitorCog,
     },
     {
@@ -72,7 +77,7 @@ export default function DashboardPage() {
           </CardHeader>
           <CardContent className="space-y-4">
             <div className="rounded-2xl bg-secondary/70 p-4 font-mono text-sm">
-              ssh &lt;instance-slug&gt;@&lt;proxy-host&gt; -p 2222
+              {sshPattern(instancesQuery.data?.ssh_port ?? 2222)}
             </div>
             <p className="text-sm text-muted-foreground">
               The SSH key identifies you. The SSH username chooses the assigned
@@ -87,8 +92,8 @@ export default function DashboardPage() {
             <CardTitle>Assigned instances</CardTitle>
           </CardHeader>
           <CardContent className="space-y-3">
-            {instancesQuery.data?.length ? (
-              instancesQuery.data.map((instance) => (
+            {instancesQuery.data?.instances.length ? (
+              instancesQuery.data.instances.map((instance) => (
                 <div
                   key={instance.id}
                   className="flex items-center justify-between gap-4 rounded-2xl border border-border/70 bg-background/70 p-4"

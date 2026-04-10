@@ -23,7 +23,7 @@ func NewRouter(cfg config.Config, db *gorm.DB, authService *auth.Service) *gin.E
 
 	authHandler := handlers.NewAuthHandler(cfg, authService)
 	adminHandler := handlers.NewAdminHandler(db)
-	userHandler := handlers.NewUserHandler(db)
+	userHandler := handlers.NewUserHandler(cfg, db)
 
 	api := router.Group("/api")
 	{
@@ -56,6 +56,8 @@ func NewRouter(cfg config.Config, db *gorm.DB, authService *auth.Service) *gin.E
 			user.DELETE("/ssh-keys/:id", userHandler.DeleteSSHKey)
 		}
 	}
+
+	registerStaticRoutes(router)
 
 	return router
 }

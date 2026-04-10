@@ -37,8 +37,9 @@ type oidcClaims struct {
 }
 
 type loginState struct {
-	Nonce     string
-	ExpiresAt time.Time
+	RedirectURL string
+	Nonce       string
+	ExpiresAt   time.Time
 }
 
 type stateStore struct {
@@ -115,6 +116,14 @@ func NewService(cfg config.Config, db *gorm.DB) (*Service, error) {
 	return service, nil
 }
 
+func (s *Service) oauthConfig(redirectURL string) *oauth2.Config {
+	cfg := *s.oauth
+	if strings.TrimSpace(redirectURL) != "" {
+		cfg.RedirectURL = strings.TrimSpace(redirectURL)
+	}
+	return &cfg
+}
+
 func (s *Service) runStateCleanup() {
 	ticker := time.NewTicker(5 * time.Minute)
 	defer ticker.Stop()
@@ -123,23 +132,28 @@ func (s *Service) runStateCleanup() {
 	}
 }
 
-func (s *Service) BeginLogin() string {
+func (s *Service) BeginLogin(redirectURL string) string {
 	state := uuid.NewString()
 	nonce := randomToken(24)
 	s.stateStore.put(state, loginState{
-		Nonce:     nonce,
-		ExpiresAt: time.Now().Add(10 * time.Minute),
+		RedirectURL: redirectURL,
+		Nonce:       nonce,
+		ExpiresAt:   time.Now().Add(10 * time.Minute),
 	})
-	return s.oauth.AuthCodeURL(state, oidc.Nonce(nonce))
+	return s.oauthConfig(redirectURL).AuthCodeURL(state, oidc.Nonce(nonce))
 }
 
-func (s *Service) HandleCallback(ctx context.Context, code, state string) (*models.User, string, error) {
+func (s *Service) HandleCallback(ctx context.Context, code, state, redirectURL string) (*models.User, string, error) {
 	savedState, ok := s.stateStore.pop(state)
 	if !ok || time.Now().After(savedState.ExpiresAt) {
 		return nil, "", errors.New("invalid or expired oidc state")
 	}
 
-	token, err := s.oauth.Exchange(ctx, code)
+	if strings.TrimSpace(savedState.RedirectURL) != "" {
+		redirectURL = savedState.RedirectURL
+	}
+
+	token, err := s.oauthConfig(redirectURL).Exchange(ctx, code)
 	if err != nil {
 		return nil, "", fmt.Errorf("exchange code: %w", err)
 	}

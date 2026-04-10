@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/gin-gonic/gin"
+	"github.com/thorved/ssh-reverseproxy/backend/internal/config"
 	"github.com/thorved/ssh-reverseproxy/backend/internal/middleware"
 	"github.com/thorved/ssh-reverseproxy/backend/internal/models"
 	"github.com/thorved/ssh-reverseproxy/backend/internal/sshkeys"
@@ -13,7 +14,13 @@ import (
 )
 
 type UserHandler struct {
-	db *gorm.DB
+	cfg config.Config
+	db  *gorm.DB
+}
+
+type listInstancesResponse struct {
+	Instances []models.Instance `json:"instances"`
+	SSHPort   int               `json:"ssh_port"`
 }
 
 type sshKeyRequest struct {
@@ -22,8 +29,8 @@ type sshKeyRequest struct {
 	IsActive  *bool  `json:"is_active"`
 }
 
-func NewUserHandler(db *gorm.DB) *UserHandler {
-	return &UserHandler{db: db}
+func NewUserHandler(cfg config.Config, db *gorm.DB) *UserHandler {
+	return &UserHandler{cfg: cfg, db: db}
 }
 
 func (h *UserHandler) ListInstances(c *gin.Context) {
@@ -37,7 +44,10 @@ func (h *UserHandler) ListInstances(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
-	c.JSON(http.StatusOK, instances)
+	c.JSON(http.StatusOK, listInstancesResponse{
+		Instances: instances,
+		SSHPort:   h.cfg.SSHPort(),
+	})
 }
 
 func (h *UserHandler) ListSSHKeys(c *gin.Context) {

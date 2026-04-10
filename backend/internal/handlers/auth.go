@@ -3,6 +3,7 @@ package handlers
 import (
 	"net/http"
 	"net/url"
+	"strings"
 
 	"github.com/gin-gonic/gin"
 	"github.com/thorved/ssh-reverseproxy/backend/internal/auth"
@@ -24,14 +25,19 @@ func (h *AuthHandler) Health(c *gin.Context) {
 }
 
 func (h *AuthHandler) Login(c *gin.Context) {
-	c.Redirect(http.StatusTemporaryRedirect, h.authService.BeginLogin())
+	c.Redirect(http.StatusTemporaryRedirect, h.authService.BeginLogin(h.callbackURL(c)))
 }
 
 func (h *AuthHandler) Callback(c *gin.Context) {
 	code := c.Query("code")
 	state := c.Query("state")
 
-	user, token, err := h.authService.HandleCallback(c.Request.Context(), code, state)
+	user, token, err := h.authService.HandleCallback(
+		c.Request.Context(),
+		code,
+		state,
+		h.callbackURL(c),
+	)
 	if err != nil {
 		c.Redirect(http.StatusTemporaryRedirect, h.redirectURL("/login?error="+url.QueryEscape(err.Error())))
 		return
@@ -79,5 +85,53 @@ func (h *AuthHandler) Logout(c *gin.Context) {
 }
 
 func (h *AuthHandler) redirectURL(path string) string {
-	return h.cfg.FrontendBaseURL + path
+	baseURL := h.publicBaseURL()
+	if h.cfg.Env == "production" {
+		return path
+	}
+	if baseURL == "" {
+		return path
+	}
+	return strings.TrimRight(baseURL, "/") + path
+}
+
+func (h *AuthHandler) callbackURL(c *gin.Context) string {
+	baseURL := h.publicBaseURLFromRequest(c)
+	if baseURL == "" {
+		baseURL = h.publicBaseURL()
+	}
+	if baseURL == "" {
+		baseURL = strings.TrimRight(h.cfg.FrontendBaseURL, "/")
+	}
+	return strings.TrimRight(baseURL, "/") + "/api/auth/oidc/callback"
+}
+
+func (h *AuthHandler) publicBaseURLFromRequest(c *gin.Context) string {
+	if forwardedHost := strings.TrimSpace(c.GetHeader("X-Forwarded-Host")); forwardedHost != "" {
+		scheme := strings.TrimSpace(c.GetHeader("X-Forwarded-Proto"))
+		if scheme == "" {
+			scheme = "http"
+		}
+		return scheme + "://" + forwardedHost
+	}
+
+	if referer := strings.TrimSpace(c.GetHeader("Referer")); referer != "" {
+		if parsed, err := url.Parse(referer); err == nil && parsed.Scheme != "" && parsed.Host != "" {
+			return parsed.Scheme + "://" + parsed.Host
+		}
+	}
+
+	if c.Request != nil && c.Request.Host != "" {
+		scheme := "http"
+		if c.Request.TLS != nil {
+			scheme = "https"
+		}
+		return scheme + "://" + c.Request.Host
+	}
+
+	return ""
+}
+
+func (h *AuthHandler) publicBaseURL() string {
+	return strings.TrimRight(h.cfg.FrontendBaseURL, "/")
 }

@@ -17,6 +17,7 @@ go.work.sum
 backend/data/
 backend/tmp/
 frontend/.next/
+frontend/out/
 frontend/node_modules/
 npm-debug.log*
 ssh

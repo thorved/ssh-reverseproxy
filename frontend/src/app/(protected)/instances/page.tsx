@@ -6,6 +6,11 @@ import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { api } from "@/lib/api";
 
+function sshCommand(slug: string, sshPort: number) {
+  const portSuffix = sshPort === 22 ? "" : ` -p ${sshPort}`;
+  return `ssh ${slug}@proxy-host${portSuffix}`;
+}
+
 export default function InstancesPage() {
   const instancesQuery = useQuery({
     queryKey: ["instances"],
@@ -25,8 +30,8 @@ export default function InstancesPage() {
           <CardTitle>Assigned inventory</CardTitle>
         </CardHeader>
         <CardContent className="space-y-4">
-          {instancesQuery.data?.length ? (
-            instancesQuery.data.map((instance) => (
+          {instancesQuery.data?.instances.length ? (
+            instancesQuery.data.instances.map((instance) => (
               <div
                 key={instance.id}
                 className="rounded-[1.5rem] border border-border/70 bg-background/80 p-5"
@@ -44,10 +49,22 @@ export default function InstancesPage() {
                     </p>
                   </div>
                   <div className="rounded-2xl bg-secondary/70 px-4 py-3 font-mono text-sm">
-                    ssh {instance.slug}@proxy-host -p 2222
+                    {sshCommand(instance.slug, instancesQuery.data.ssh_port)}
                   </div>
                 </div>
                 <div className="mt-4 grid gap-3 text-sm text-muted-foreground sm:grid-cols-2">
+                  <p>
+                    <span className="font-medium text-foreground">
+                      Proxy slug:
+                    </span>{" "}
+                    {instance.slug}
+                  </p>
+                  <p>
+                    <span className="font-medium text-foreground">
+                      Upstream user:
+                    </span>{" "}
+                    {instance.upstream_user}
+                  </p>
                   <p>
                     <span className="font-medium text-foreground">
                       Upstream:

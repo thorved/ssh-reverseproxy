@@ -18,20 +18,20 @@ type Config struct {
 	SessionSecure     bool
 	SessionSecret     string
 
-	OIDCIssuerURL   string
-	OIDCClientID    string
+	OIDCIssuerURL    string
+	OIDCClientID     string
 	OIDCClientSecret string
-	OIDCRedirectURL string
-	OIDCScopes      []string
+	OIDCRedirectURL  string
+	OIDCScopes       []string
 
 	AdminEmails []string
 
-	SSHListenAddr          string
-	SSHHostKeyPath         string
-	SSHKnownHostsPath      string
-	SSHServerIdent         string
-	SSHDialTimeout         time.Duration
-	SSHAcceptUnknownHost   bool
+	SSHListenAddr        string
+	SSHHostKeyPath       string
+	SSHKnownHostsPath    string
+	SSHServerIdent       string
+	SSHDialTimeout       time.Duration
+	SSHAcceptUnknownHost bool
 }
 
 func MustLoad() Config {
@@ -47,25 +47,25 @@ func MustLoad() Config {
 	}
 
 	return Config{
-		Env:               envOr("ENV", "development"),
-		HTTPListenAddr:    httpAddr,
-		FrontendBaseURL:   frontendBaseURL,
-		DatabasePath:      envOr("DATABASE_PATH", "./data/ssh-reverseproxy.db"),
-		SessionCookieName: envOr("SESSION_COOKIE_NAME", "sshrp_session"),
-		SessionTTL:        envDurationOr("SESSION_TTL", 7*24*time.Hour),
-		SessionSecure:     envBoolOr("SESSION_SECURE", false),
-		SessionSecret:     envOr("SESSION_SECRET", "development-session-secret-change-me"),
-		OIDCIssuerURL:     strings.TrimRight(os.Getenv("OIDC_ISSUER_URL"), "/"),
-		OIDCClientID:      strings.TrimSpace(os.Getenv("OIDC_CLIENT_ID")),
-		OIDCClientSecret:  strings.TrimSpace(os.Getenv("OIDC_CLIENT_SECRET")),
-		OIDCRedirectURL:   redirectURL,
-		OIDCScopes:        envCSVOr("OIDC_SCOPES", []string{"openid", "profile", "email"}),
-		AdminEmails:       normalizeEmails(envCSVOr("ADMIN_EMAILS", nil)),
-		SSHListenAddr:     sshListenAddr(),
-		SSHHostKeyPath:    strings.TrimSpace(os.Getenv("SSH_HOST_KEY_PATH")),
-		SSHKnownHostsPath: strings.TrimSpace(os.Getenv("SSH_KNOWN_HOSTS")),
-		SSHServerIdent:    envOr("SSH_SERVER_IDENT", "SSH-2.0-ssh-reverseproxy"),
-		SSHDialTimeout:    envDurationOr("SSH_DIAL_TIMEOUT", 15*time.Second),
+		Env:                  envOr("ENV", "development"),
+		HTTPListenAddr:       httpAddr,
+		FrontendBaseURL:      frontendBaseURL,
+		DatabasePath:         envOr("DATABASE_PATH", "./data/ssh-reverseproxy.db"),
+		SessionCookieName:    envOr("SESSION_COOKIE_NAME", "sshrp_session"),
+		SessionTTL:           envDurationOr("SESSION_TTL", 7*24*time.Hour),
+		SessionSecure:        envBoolOr("SESSION_SECURE", false),
+		SessionSecret:        envOr("SESSION_SECRET", "development-session-secret-change-me"),
+		OIDCIssuerURL:        strings.TrimRight(os.Getenv("OIDC_ISSUER_URL"), "/"),
+		OIDCClientID:         strings.TrimSpace(os.Getenv("OIDC_CLIENT_ID")),
+		OIDCClientSecret:     strings.TrimSpace(os.Getenv("OIDC_CLIENT_SECRET")),
+		OIDCRedirectURL:      redirectURL,
+		OIDCScopes:           envCSVOr("OIDC_SCOPES", []string{"openid", "profile", "email"}),
+		AdminEmails:          normalizeEmails(envCSVOr("ADMIN_EMAILS", nil)),
+		SSHListenAddr:        sshListenAddr(),
+		SSHHostKeyPath:       strings.TrimSpace(os.Getenv("SSH_HOST_KEY_PATH")),
+		SSHKnownHostsPath:    strings.TrimSpace(os.Getenv("SSH_KNOWN_HOSTS")),
+		SSHServerIdent:       envOr("SSH_SERVER_IDENT", "SSH-2.0-ssh-reverseproxy"),
+		SSHDialTimeout:       envDurationOr("SSH_DIAL_TIMEOUT", 15*time.Second),
 		SSHAcceptUnknownHost: envBoolOr("SSH_ACCEPT_UNKNOWN_UPSTREAM", false),
 	}
 }
@@ -149,4 +149,14 @@ func (c Config) HTTPPort() int {
 		}
 	}
 	return 8080
+}
+
+func (c Config) SSHPort() int {
+	if idx := strings.LastIndex(c.SSHListenAddr, ":"); idx >= 0 && idx < len(c.SSHListenAddr)-1 {
+		port, err := strconv.Atoi(c.SSHListenAddr[idx+1:])
+		if err == nil {
+			return port
+		}
+	}
+	return 2222
 }

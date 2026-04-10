@@ -9,6 +9,7 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
+import { getApiUrl } from "@/lib/api";
 
 export default function LoginPage() {
   return (
@@ -69,7 +70,9 @@ export default function LoginPage() {
           </CardHeader>
           <CardContent className="space-y-4">
             <Button asChild className="w-full" size="lg">
-              <a href="/api/auth/oidc/login">Continue to identity provider</a>
+              <a href={getApiUrl("/api/auth/oidc/login")}>
+                Continue to identity provider
+              </a>
             </Button>
             <p className="text-sm text-muted-foreground">
               The backend callback sets an HTTP-only session cookie, so the UI
