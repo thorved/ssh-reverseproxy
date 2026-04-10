@@ -44,13 +44,14 @@ type Instance struct {
 	Description     string    `json:"description"`
 	AssignedUsers   []User    `gorm:"many2many:instance_assignments;" json:"assigned_users,omitempty"`
 	AssignedUserIDs []uint    `gorm:"-" json:"assigned_user_ids"`
+	AuthPublicKey   string    `gorm:"-" json:"auth_public_key,omitempty"`
 	UpstreamHost    string    `gorm:"not null" json:"upstream_host"`
 	UpstreamPort    int       `gorm:"not null;default:22" json:"upstream_port"`
 	UpstreamUser    string    `gorm:"not null" json:"upstream_user"`
 	AuthMethod      string    `gorm:"not null;default:key" json:"auth_method"`
-	AuthPassword    string    `json:"auth_password,omitempty"`
-	AuthKeyInline   string    `json:"auth_key_inline,omitempty"`
-	AuthPassphrase  string    `json:"auth_passphrase,omitempty"`
+	AuthPassword    string    `json:"-"`
+	AuthKeyInline   string    `json:"-"`
+	AuthPassphrase  string    `json:"-"`
 	Enabled         bool      `gorm:"not null;default:true" json:"enabled"`
 	CreatedAt       time.Time `json:"created_at"`
 	UpdatedAt       time.Time `json:"updated_at"`

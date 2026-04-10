@@ -1,7 +1,7 @@
 "use client";
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Plus, Trash2, Users } from "lucide-react";
+import { Copy, KeyRound, Plus, Trash2, Users } from "lucide-react";
 import { useId, useState } from "react";
 import { PageHeader } from "@/components/layout/page-header";
 import { Badge } from "@/components/ui/badge";
@@ -42,6 +42,9 @@ type InstanceFormState = {
   auth_password: string;
   auth_key_inline: string;
   auth_passphrase: string;
+  auth_public_key: string;
+  key_input_mode: "generate" | "paste";
+  regenerate_auth_key?: boolean;
   assigned_user_ids: number[];
   enabled: boolean;
 };
@@ -58,6 +61,9 @@ const emptyState: InstanceFormState = {
   auth_password: "",
   auth_key_inline: "",
   auth_passphrase: "",
+  auth_public_key: "",
+  key_input_mode: "generate",
+  regenerate_auth_key: false,
   assigned_user_ids: [],
   enabled: true,
 };
@@ -85,25 +91,80 @@ export default function AdminInstancesPage() {
 
   const [form, setForm] = useState<InstanceFormState>(emptyState);
   const [error, setError] = useState<string | null>(null);
+  const [successMessage, setSuccessMessage] = useState<string | null>(null);
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState<Instance | null>(null);
 
   const saveMutation = useMutation({
     mutationFn: async (payload: InstanceFormState) => {
+      if (
+        payload.auth_method === "key" &&
+        payload.key_input_mode === "paste" &&
+        !payload.auth_key_inline.trim()
+      ) {
+        throw new Error(
+          "Paste a private key or switch back to Generate for me.",
+        );
+      }
+
       const requestBody = {
         ...payload,
+        auth_key_inline:
+          payload.auth_method === "key" &&
+          payload.key_input_mode === "generate" &&
+          !payload.id
+            ? ""
+            : payload.auth_key_inline,
+        auth_passphrase:
+          payload.auth_method === "key" &&
+          payload.key_input_mode === "generate" &&
+          !payload.id
+            ? ""
+            : payload.auth_passphrase,
         assigned_user_ids: payload.assigned_user_ids,
+        auth_public_key: undefined,
+        key_input_mode: undefined,
       };
       if (payload.id) {
         return api.updateInstance(payload.id, requestBody);
       }
       return api.createInstance(requestBody);
     },
-    onSuccess: () => {
-      setForm(emptyState);
+    onSuccess: (instance, payload) => {
       setError(null);
-      setIsModalOpen(false);
       void queryClient.invalidateQueries({ queryKey: ["admin-instances"] });
+      if (payload.id && !payload.regenerate_auth_key) {
+        setSuccessMessage(null);
+        setForm(emptyState);
+        setIsModalOpen(false);
+        return;
+      }
+
+      setForm({
+        id: instance.id,
+        name: instance.name,
+        slug: instance.slug,
+        description: instance.description ?? "",
+        upstream_host: instance.upstream_host,
+        upstream_port: instance.upstream_port,
+        upstream_user: instance.upstream_user,
+        auth_method: instance.auth_method,
+        auth_password: "",
+        auth_key_inline: "",
+        auth_passphrase: "",
+        auth_public_key: instance.auth_public_key ?? "",
+        key_input_mode: payload.key_input_mode,
+        regenerate_auth_key: false,
+        assigned_user_ids: instance.assigned_user_ids ?? [],
+        enabled: instance.enabled,
+      });
+      setSuccessMessage(
+        payload.regenerate_auth_key
+          ? "A fresh key pair was generated. Copy the new public key below."
+          : instance.auth_method === "key" && instance.auth_public_key
+            ? "Instance created. Copy the public key below and add it to the upstream machine."
+            : "Instance created.",
+      );
     },
     onError: (mutationError) => {
       setError(
@@ -130,13 +191,17 @@ export default function AdminInstancesPage() {
       upstream_port: instance.upstream_port,
       upstream_user: instance.upstream_user,
       auth_method: instance.auth_method,
-      auth_password: instance.auth_password ?? "",
-      auth_key_inline: instance.auth_key_inline ?? "",
-      auth_passphrase: instance.auth_passphrase ?? "",
+      auth_password: "",
+      auth_key_inline: "",
+      auth_passphrase: "",
+      auth_public_key: instance.auth_public_key ?? "",
+      key_input_mode: "generate",
+      regenerate_auth_key: false,
       assigned_user_ids: instance.assigned_user_ids ?? [],
       enabled: instance.enabled,
     });
     setError(null);
+    setSuccessMessage(null);
     setIsModalOpen(true);
   };
 
@@ -160,6 +225,7 @@ export default function AdminInstancesPage() {
             onClick={() => {
               setForm(emptyState);
               setError(null);
+              setSuccessMessage(null);
               setIsModalOpen(true);
             }}
           >
@@ -178,6 +244,7 @@ export default function AdminInstancesPage() {
           }
           setForm(emptyState);
           setError(null);
+          setSuccessMessage(null);
         }}
       >
         <DialogContent className="sm:max-w-4xl">
@@ -360,32 +427,170 @@ export default function AdminInstancesPage() {
             {form.auth_method === "key" ? (
               <div className="space-y-4">
                 <div className="space-y-2">
-                  <Label htmlFor={authKeyId}>Private key</Label>
-                  <Textarea
-                    id={authKeyId}
-                    value={form.auth_key_inline}
-                    onChange={(event) =>
-                      setForm((current) => ({
-                        ...current,
-                        auth_key_inline: event.target.value,
-                      }))
-                    }
-                  />
+                  <Label>Key source</Label>
+                  <div className="flex flex-wrap gap-2">
+                    <Button
+                      type="button"
+                      variant={
+                        form.key_input_mode === "generate"
+                          ? "default"
+                          : "outline"
+                      }
+                      onClick={() =>
+                        setForm((current) => ({
+                          ...current,
+                          key_input_mode: "generate",
+                          regenerate_auth_key: false,
+                          auth_key_inline: current.id
+                            ? current.auth_key_inline
+                            : "",
+                          auth_passphrase: current.id
+                            ? current.auth_passphrase
+                            : "",
+                        }))
+                      }
+                    >
+                      <KeyRound className="h-4 w-4" />
+                      Generate for me
+                    </Button>
+                    <Button
+                      type="button"
+                      variant={
+                        form.key_input_mode === "paste" ? "default" : "outline"
+                      }
+                      onClick={() =>
+                        setForm((current) => ({
+                          ...current,
+                          key_input_mode: "paste",
+                          regenerate_auth_key: false,
+                          auth_public_key:
+                            current.key_input_mode === "paste"
+                              ? current.auth_public_key
+                              : "",
+                        }))
+                      }
+                    >
+                      Paste my private key
+                    </Button>
+                  </div>
                 </div>
-                <div className="space-y-2">
-                  <Label htmlFor={authPassphraseId}>Passphrase</Label>
-                  <Input
-                    id={authPassphraseId}
-                    type="password"
-                    value={form.auth_passphrase}
-                    onChange={(event) =>
-                      setForm((current) => ({
-                        ...current,
-                        auth_passphrase: event.target.value,
-                      }))
-                    }
-                  />
-                </div>
+
+                {form.key_input_mode === "generate" ? (
+                  <div className="space-y-3 rounded-2xl border border-border bg-muted/25 p-4">
+                    <p className="text-sm text-muted-foreground">
+                      {form.id
+                        ? form.auth_public_key
+                          ? "This instance is using a stored private key. The public key is shown below if you need to install it on another upstream machine."
+                          : "This instance is using a stored private key, but the public key is not available in this view right now."
+                        : "A fresh ed25519 private key will be generated when you create the instance. Copy the public key after save and add it to the upstream machine."}
+                    </p>
+                    {form.auth_public_key ? (
+                      <div className="space-y-4">
+                        {form.id ? (
+                          <div className="flex justify-end">
+                            <Button
+                              type="button"
+                              variant="outline"
+                              onClick={() =>
+                                saveMutation.mutate({
+                                  ...form,
+                                  regenerate_auth_key: true,
+                                })
+                              }
+                              disabled={saveMutation.isPending}
+                            >
+                              <KeyRound className="h-4 w-4" />
+                              Regenerate key
+                            </Button>
+                          </div>
+                        ) : null}
+                        <div className="space-y-2">
+                          <Label>
+                            Public key to install on the upstream machine
+                          </Label>
+                          <Textarea
+                            value={form.auth_public_key}
+                            readOnly
+                            className="min-h-24 font-mono text-xs"
+                          />
+                          <div className="flex justify-end">
+                            <Button
+                              type="button"
+                              variant="outline"
+                              onClick={async () => {
+                                await navigator.clipboard.writeText(
+                                  form.auth_public_key,
+                                );
+                              }}
+                            >
+                              <Copy className="h-4 w-4" />
+                              Copy public key
+                            </Button>
+                          </div>
+                        </div>
+                      </div>
+                    ) : (
+                      <div className="rounded-xl border border-dashed border-border bg-background/70 px-4 py-3 text-sm text-muted-foreground">
+                        <div className="space-y-3">
+                          <p>
+                            {form.id
+                              ? "No public key is available to show for this saved instance."
+                              : "The public key will appear here right after you create the instance."}
+                          </p>
+                          {form.id ? (
+                            <div className="flex justify-end">
+                              <Button
+                                type="button"
+                                variant="outline"
+                                onClick={() =>
+                                  saveMutation.mutate({
+                                    ...form,
+                                    regenerate_auth_key: true,
+                                  })
+                                }
+                                disabled={saveMutation.isPending}
+                              >
+                                <KeyRound className="h-4 w-4" />
+                                Regenerate key
+                              </Button>
+                            </div>
+                          ) : null}
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                ) : (
+                  <div className="space-y-2">
+                    <Label htmlFor={authKeyId}>Private key</Label>
+                    <Textarea
+                      id={authKeyId}
+                      value={form.auth_key_inline}
+                      onChange={(event) =>
+                        setForm((current) => ({
+                          ...current,
+                          auth_key_inline: event.target.value,
+                          auth_public_key: "",
+                        }))
+                      }
+                    />
+                  </div>
+                )}
+                {form.key_input_mode === "paste" ? (
+                  <div className="space-y-2">
+                    <Label htmlFor={authPassphraseId}>Passphrase</Label>
+                    <Input
+                      id={authPassphraseId}
+                      type="password"
+                      value={form.auth_passphrase}
+                      onChange={(event) =>
+                        setForm((current) => ({
+                          ...current,
+                          auth_passphrase: event.target.value,
+                        }))
+                      }
+                    />
+                  </div>
+                ) : null}
               </div>
             ) : null}
 
@@ -403,6 +608,9 @@ export default function AdminInstancesPage() {
               Instance enabled
             </label>
 
+            {successMessage ? (
+              <p className="text-sm text-primary">{successMessage}</p>
+            ) : null}
             {error ? <p className="text-sm text-destructive">{error}</p> : null}
 
             <DialogFooter>
@@ -412,6 +620,7 @@ export default function AdminInstancesPage() {
                   setIsModalOpen(false);
                   setForm(emptyState);
                   setError(null);
+                  setSuccessMessage(null);
                 }}
               >
                 Cancel
@@ -479,8 +688,8 @@ export default function AdminInstancesPage() {
                     </TableCell>
                     <TableCell>
                       <div className="flex flex-wrap gap-2">
-                        {instance.assigned_users.length ? (
-                          instance.assigned_users.map((user) => (
+                        {(instance.assigned_users ?? []).length ? (
+                          (instance.assigned_users ?? []).map((user) => (
                             <Badge key={user.id} tone="success">
                               {user.display_name || user.email}
                             </Badge>

@@ -9,6 +9,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/thorved/ssh-reverseproxy/backend/internal/middleware"
 	"github.com/thorved/ssh-reverseproxy/backend/internal/models"
+	"github.com/thorved/ssh-reverseproxy/backend/internal/sshkeys"
 	"gorm.io/gorm"
 )
 
@@ -30,18 +31,19 @@ type updateUserRequest struct {
 }
 
 type instanceRequest struct {
-	Name            string `json:"name" binding:"required"`
-	Slug            string `json:"slug"`
-	Description     string `json:"description"`
-	UpstreamHost    string `json:"upstream_host" binding:"required"`
-	UpstreamPort    int    `json:"upstream_port"`
-	UpstreamUser    string `json:"upstream_user" binding:"required"`
-	AuthMethod      string `json:"auth_method" binding:"required,oneof=none password key"`
-	AuthPassword    string `json:"auth_password"`
-	AuthKeyInline   string `json:"auth_key_inline"`
-	AuthPassphrase  string `json:"auth_passphrase"`
-	Enabled         *bool  `json:"enabled"`
-	AssignedUserIDs []uint `json:"assigned_user_ids"`
+	Name              string `json:"name" binding:"required"`
+	Slug              string `json:"slug"`
+	Description       string `json:"description"`
+	UpstreamHost      string `json:"upstream_host" binding:"required"`
+	UpstreamPort      int    `json:"upstream_port"`
+	UpstreamUser      string `json:"upstream_user" binding:"required"`
+	AuthMethod        string `json:"auth_method" binding:"required,oneof=none password key"`
+	AuthPassword      string `json:"auth_password"`
+	AuthKeyInline     string `json:"auth_key_inline"`
+	AuthPassphrase    string `json:"auth_passphrase"`
+	RegenerateAuthKey bool   `json:"regenerate_auth_key"`
+	Enabled           *bool  `json:"enabled"`
+	AssignedUserIDs   []uint `json:"assigned_user_ids"`
 }
 
 func NewAdminHandler(db *gorm.DB) *AdminHandler {
@@ -235,7 +237,7 @@ func (h *AdminHandler) ListInstances(c *gin.Context) {
 	}
 
 	for index := range instances {
-		instances[index].PopulateAssignedUserIDs()
+		h.populateInstanceResponse(&instances[index])
 	}
 	c.JSON(http.StatusOK, instances)
 }
@@ -248,7 +250,10 @@ func (h *AdminHandler) CreateInstance(c *gin.Context) {
 	}
 
 	instance := &models.Instance{}
-	applyInstanceRequest(instance, req)
+	if err := applyInstanceRequest(instance, req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
 
 	if err := h.db.Transaction(func(tx *gorm.DB) error {
 		if err := tx.Create(instance).Error; err != nil {
@@ -280,7 +285,10 @@ func (h *AdminHandler) UpdateInstance(c *gin.Context) {
 		return
 	}
 
-	applyInstanceRequest(&instance, req)
+	if err := applyInstanceRequest(&instance, req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
 	if err := h.db.Transaction(func(tx *gorm.DB) error {
 		if err := tx.Save(&instance).Error; err != nil {
 			return err
@@ -331,8 +339,13 @@ func (h *AdminHandler) loadInstance(instance *models.Instance, id uint) error {
 	if err := h.preloadedInstancesQuery().First(instance, id).Error; err != nil {
 		return err
 	}
-	instance.PopulateAssignedUserIDs()
+	h.populateInstanceResponse(instance)
 	return nil
+}
+
+func (h *AdminHandler) populateInstanceResponse(instance *models.Instance) {
+	instance.PopulateAssignedUserIDs()
+	instance.AuthPublicKey = derivedInstancePublicKey(instance)
 }
 
 func (h *AdminHandler) replaceAssignedUsers(tx *gorm.DB, instance *models.Instance, rawIDs []uint) error {
@@ -406,7 +419,8 @@ func uniqueUintIDs(rawIDs []uint) []uint {
 	return ids
 }
 
-func applyInstanceRequest(instance *models.Instance, req instanceRequest) {
+func applyInstanceRequest(instance *models.Instance, req instanceRequest) error {
+	previousAuthMethod := strings.TrimSpace(instance.AuthMethod)
 	instance.Name = strings.TrimSpace(req.Name)
 	instance.Slug = buildSlug(req.Slug, req.Name)
 	instance.Description = strings.TrimSpace(req.Description)
@@ -418,14 +432,54 @@ func applyInstanceRequest(instance *models.Instance, req instanceRequest) {
 	}
 	instance.UpstreamUser = strings.TrimSpace(req.UpstreamUser)
 	instance.AuthMethod = strings.TrimSpace(req.AuthMethod)
-	instance.AuthPassword = req.AuthPassword
-	instance.AuthKeyInline = req.AuthKeyInline
-	instance.AuthPassphrase = req.AuthPassphrase
+	switch instance.AuthMethod {
+	case "key":
+		trimmedKey := strings.TrimSpace(req.AuthKeyInline)
+		if req.RegenerateAuthKey || trimmedKey == "" {
+			if req.RegenerateAuthKey || strings.TrimSpace(instance.AuthKeyInline) == "" {
+				privateKey, _, passphrase, err := sshkeys.GeneratePrivateKeyPEM()
+				if err != nil {
+					return err
+				}
+				instance.AuthKeyInline = privateKey
+				instance.AuthPassphrase = passphrase
+			}
+		} else {
+			instance.AuthKeyInline = trimmedKey
+			instance.AuthPassphrase = req.AuthPassphrase
+		}
+		instance.AuthPassword = ""
+	case "password":
+		if strings.TrimSpace(req.AuthPassword) != "" {
+			instance.AuthPassword = req.AuthPassword
+		} else if instance.ID == 0 || previousAuthMethod != "password" {
+			return errors.New("upstream password is required")
+		}
+		instance.AuthKeyInline = ""
+		instance.AuthPassphrase = ""
+	case "none":
+		instance.AuthPassword = ""
+		instance.AuthKeyInline = ""
+		instance.AuthPassphrase = ""
+	}
 	if req.Enabled != nil {
 		instance.Enabled = *req.Enabled
 	} else if instance.ID == 0 {
 		instance.Enabled = true
 	}
+	return nil
+}
+
+func derivedInstancePublicKey(instance *models.Instance) string {
+	if strings.TrimSpace(instance.AuthMethod) != "key" || strings.TrimSpace(instance.AuthKeyInline) == "" {
+		return ""
+	}
+
+	publicKey, err := sshkeys.PublicKeyFromPrivateKey(instance.AuthKeyInline, instance.AuthPassphrase)
+	if err != nil {
+		return ""
+	}
+	return publicKey
 }
 
 var slugRe = regexp.MustCompile(`[^a-z0-9]+`)

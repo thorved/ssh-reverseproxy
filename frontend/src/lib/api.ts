@@ -14,13 +14,11 @@ export type Instance = {
   description: string;
   assigned_user_ids: number[];
   assigned_users: User[];
+  auth_public_key?: string;
   upstream_host: string;
   upstream_port: number;
   upstream_user: string;
   auth_method: "none" | "password" | "key";
-  auth_password?: string;
-  auth_key_inline?: string;
-  auth_passphrase?: string;
   enabled: boolean;
   created_at: string;
   updated_at: string;
