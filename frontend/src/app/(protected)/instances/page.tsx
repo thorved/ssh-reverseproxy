@@ -6,9 +6,10 @@ import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { api } from "@/lib/api";
 
-function sshCommand(slug: string, sshPort: number) {
+function sshCommand(slug: string, sshHost: string, sshPort: number) {
+  const host = sshHost.trim() || "proxy-host";
   const portSuffix = sshPort === 22 ? "" : ` -p ${sshPort}`;
-  return `ssh ${slug}@proxy-host${portSuffix}`;
+  return `ssh ${slug}@${host}${portSuffix}`;
 }
 
 export default function InstancesPage() {
@@ -49,7 +50,11 @@ export default function InstancesPage() {
                     </p>
                   </div>
                   <div className="rounded-2xl bg-secondary/70 px-4 py-3 font-mono text-sm">
-                    {sshCommand(instance.slug, instancesQuery.data.ssh_port)}
+                    {sshCommand(
+                      instance.slug,
+                      instancesQuery.data.ssh_host,
+                      instancesQuery.data.ssh_port,
+                    )}
                   </div>
                 </div>
                 <div className="mt-4 grid gap-3 text-sm text-muted-foreground sm:grid-cols-2">

@@ -27,6 +27,7 @@ type Config struct {
 	AdminEmails []string
 
 	SSHListenAddr        string
+	SSHPublicHost        string
 	SSHHostKeyPath       string
 	SSHKnownHostsPath    string
 	SSHServerIdent       string
@@ -62,6 +63,7 @@ func MustLoad() Config {
 		OIDCScopes:           envCSVOr("OIDC_SCOPES", []string{"openid", "profile", "email"}),
 		AdminEmails:          normalizeEmails(envCSVOr("ADMIN_EMAILS", nil)),
 		SSHListenAddr:        sshListenAddr(),
+		SSHPublicHost:        sshPublicHost(),
 		SSHHostKeyPath:       strings.TrimSpace(os.Getenv("SSH_HOST_KEY_PATH")),
 		SSHKnownHostsPath:    strings.TrimSpace(os.Getenv("SSH_KNOWN_HOSTS")),
 		SSHServerIdent:       envOr("SSH_SERVER_IDENT", "SSH-2.0-ssh-reverseproxy"),
@@ -75,6 +77,13 @@ func sshListenAddr() string {
 		return v
 	}
 	return ":" + envOr("SSH_PORT", "2222")
+}
+
+func sshPublicHost() string {
+	if v := strings.TrimSpace(os.Getenv("SSH_PUBLIC_HOST")); v != "" {
+		return v
+	}
+	return "proxy-host"
 }
 
 func envOr(key, fallback string) string {

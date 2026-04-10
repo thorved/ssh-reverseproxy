@@ -8,9 +8,10 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { useAuth } from "@/contexts/auth-context";
 import { api } from "@/lib/api";
 
-function sshPattern(sshPort: number) {
+function sshPattern(sshHost: string, sshPort: number) {
+  const host = sshHost.trim() || "proxy-host";
   const portSuffix = sshPort === 22 ? "" : ` -p ${sshPort}`;
-  return `ssh <instance-slug>@<proxy-host>${portSuffix}`;
+  return `ssh <instance-slug>@${host}${portSuffix}`;
 }
 
 export default function DashboardPage() {
@@ -77,7 +78,10 @@ export default function DashboardPage() {
           </CardHeader>
           <CardContent className="space-y-4">
             <div className="rounded-2xl bg-secondary/70 p-4 font-mono text-sm">
-              {sshPattern(instancesQuery.data?.ssh_port ?? 2222)}
+              {sshPattern(
+                instancesQuery.data?.ssh_host ?? "proxy-host",
+                instancesQuery.data?.ssh_port ?? 2222,
+              )}
             </div>
             <p className="text-sm text-muted-foreground">
               The SSH key identifies you. The SSH username chooses the assigned

@@ -20,6 +20,7 @@ type UserHandler struct {
 
 type listInstancesResponse struct {
 	Instances []models.Instance `json:"instances"`
+	SSHHost   string            `json:"ssh_host"`
 	SSHPort   int               `json:"ssh_port"`
 }
 
@@ -46,6 +47,7 @@ func (h *UserHandler) ListInstances(c *gin.Context) {
 	}
 	c.JSON(http.StatusOK, listInstancesResponse{
 		Instances: instances,
+		SSHHost:   h.cfg.SSHPublicHost,
 		SSHPort:   h.cfg.SSHPort(),
 	})
 }

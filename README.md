@@ -57,6 +57,7 @@ npm run dev
 ```
 
 The frontend runs on `http://localhost:3000` and talks to the Go backend using `NEXT_PUBLIC_DEV_API_URL`.
+SSH command hints shown in the UI are sourced from backend config (`SSH_PUBLIC_HOST` and `SSH_PORT`/`SSH_LISTEN_ADDR`).
 
 ## Production Deployment
 
@@ -82,6 +83,7 @@ Set these in `backend/.env`:
 - `OIDC_CLIENT_SECRET`
 - `OIDC_REDIRECT_URL`
 - `ADMIN_EMAILS`
+- `SSH_PUBLIC_HOST` (public SSH hostname/IP users should connect to)
 
 SQLite data is stored at `DATABASE_PATH`.
 

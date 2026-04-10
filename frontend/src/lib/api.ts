@@ -28,6 +28,7 @@ export type Instance = {
 
 export type UserInstancesResponse = {
   instances: Instance[];
+  ssh_host: string;
   ssh_port: number;
 };
 
