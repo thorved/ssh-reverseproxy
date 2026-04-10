@@ -1,12 +1,13 @@
 "use client";
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Plus, Shield } from "lucide-react";
+import { KeyRound, Plus, Shield, Trash2 } from "lucide-react";
 import { useId, useState } from "react";
 import { PageHeader } from "@/components/layout/page-header";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
+import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import {
   Dialog,
   DialogContent,
@@ -27,8 +28,9 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
+import { Textarea } from "@/components/ui/textarea";
 import { useAuth } from "@/contexts/auth-context";
-import { api, type User } from "@/lib/api";
+import { api, type SSHKey, type User } from "@/lib/api";
 
 type UserFormState = {
   id: number | null;
@@ -38,7 +40,13 @@ type UserFormState = {
   is_active: boolean;
 };
 
-const emptyState: UserFormState = {
+type SSHKeyFormState = {
+  name: string;
+  public_key: string;
+  is_active: boolean;
+};
+
+const emptyUserState: UserFormState = {
   id: null,
   email: "",
   display_name: "",
@@ -46,10 +54,18 @@ const emptyState: UserFormState = {
   is_active: true,
 };
 
+const emptyKeyState: SSHKeyFormState = {
+  name: "",
+  public_key: "",
+  is_active: true,
+};
+
 export default function AdminUsersPage() {
   const emailId = useId();
   const displayNameId = useId();
   const roleId = useId();
+  const keyNameId = useId();
+  const keyPublicKeyId = useId();
   const { user: currentUser } = useAuth();
   const queryClient = useQueryClient();
   const usersQuery = useQuery({
@@ -57,9 +73,25 @@ export default function AdminUsersPage() {
     queryFn: api.listUsers,
   });
 
-  const [form, setForm] = useState<UserFormState>(emptyState);
+  const [form, setForm] = useState<UserFormState>(emptyUserState);
   const [error, setError] = useState<string | null>(null);
   const [isModalOpen, setIsModalOpen] = useState(false);
+  const [keysModalUser, setKeysModalUser] = useState<User | null>(null);
+  const [keyForm, setKeyForm] = useState<SSHKeyFormState>(emptyKeyState);
+  const [keyError, setKeyError] = useState<string | null>(null);
+  const [deleteUserTarget, setDeleteUserTarget] = useState<User | null>(null);
+  const [deleteKeyTarget, setDeleteKeyTarget] = useState<SSHKey | null>(null);
+
+  const keysQuery = useQuery({
+    queryKey: ["admin-user-keys", keysModalUser?.id],
+    queryFn: async () => {
+      if (!keysModalUser) {
+        throw new Error("Select a user first");
+      }
+      return api.listAdminUserSSHKeys(keysModalUser.id);
+    },
+    enabled: keysModalUser !== null,
+  });
 
   const saveMutation = useMutation({
     mutationFn: async (payload: UserFormState) => {
@@ -73,7 +105,7 @@ export default function AdminUsersPage() {
       return api.createUser(payload);
     },
     onSuccess: () => {
-      setForm(emptyState);
+      setForm(emptyUserState);
       setError(null);
       setIsModalOpen(false);
       void queryClient.invalidateQueries({ queryKey: ["admin-users"] });
@@ -82,6 +114,51 @@ export default function AdminUsersPage() {
       setError(
         mutationError instanceof Error ? mutationError.message : "Save failed",
       );
+    },
+  });
+
+  const deleteUserMutation = useMutation({
+    mutationFn: (userId: number) => api.deleteUser(userId),
+    onSuccess: () => {
+      setDeleteUserTarget(null);
+      void queryClient.invalidateQueries({ queryKey: ["admin-users"] });
+      void queryClient.invalidateQueries({ queryKey: ["admin-instances"] });
+    },
+  });
+
+  const createKeyMutation = useMutation({
+    mutationFn: () => {
+      if (!keysModalUser) {
+        throw new Error("Select a user first");
+      }
+      return api.createAdminUserSSHKey(keysModalUser.id, keyForm);
+    },
+    onSuccess: () => {
+      setKeyForm(emptyKeyState);
+      setKeyError(null);
+      void queryClient.invalidateQueries({
+        queryKey: ["admin-user-keys", keysModalUser?.id],
+      });
+    },
+    onError: (mutationError) => {
+      setKeyError(
+        mutationError instanceof Error ? mutationError.message : "Save failed",
+      );
+    },
+  });
+
+  const deleteKeyMutation = useMutation({
+    mutationFn: (keyId: number) => {
+      if (!keysModalUser) {
+        throw new Error("Select a user first");
+      }
+      return api.deleteAdminUserSSHKey(keysModalUser.id, keyId);
+    },
+    onSuccess: () => {
+      setDeleteKeyTarget(null);
+      void queryClient.invalidateQueries({
+        queryKey: ["admin-user-keys", keysModalUser?.id],
+      });
     },
   });
 
@@ -97,15 +174,22 @@ export default function AdminUsersPage() {
     setIsModalOpen(true);
   };
 
+  const openKeysModal = (user: User) => {
+    setKeysModalUser(user);
+    setKeyForm(emptyKeyState);
+    setKeyError(null);
+    setDeleteKeyTarget(null);
+  };
+
   return (
     <div className="space-y-6">
       <PageHeader
         title="User Management"
-        description="Create and manage users who can access the SSH reverse proxy"
+        description="Create users, manage sign-in state, and control their published SSH keys."
         actions={
           <Button
             onClick={() => {
-              setForm(emptyState);
+              setForm(emptyUserState);
               setError(null);
               setIsModalOpen(true);
             }}
@@ -123,8 +207,7 @@ export default function AdminUsersPage() {
           if (open) {
             return;
           }
-          setIsModalOpen(false);
-          setForm(emptyState);
+          setForm(emptyUserState);
           setError(null);
         }}
       >
@@ -215,7 +298,7 @@ export default function AdminUsersPage() {
                 variant="outline"
                 onClick={() => {
                   setIsModalOpen(false);
-                  setForm(emptyState);
+                  setForm(emptyUserState);
                   setError(null);
                 }}
               >
@@ -232,6 +315,189 @@ export default function AdminUsersPage() {
         </DialogContent>
       </Dialog>
 
+      <Dialog
+        open={keysModalUser !== null}
+        onOpenChange={(open) => {
+          if (!open) {
+            setKeysModalUser(null);
+            setKeyForm(emptyKeyState);
+            setKeyError(null);
+            setDeleteKeyTarget(null);
+          }
+        }}
+      >
+        <DialogContent className="sm:max-w-3xl">
+          <DialogHeader>
+            <DialogTitle>Manage user keys</DialogTitle>
+            <DialogDescription>
+              {keysModalUser
+                ? `Add or remove SSH keys for ${
+                    keysModalUser.display_name || keysModalUser.email
+                  }.`
+                : "Add or remove SSH keys for this user."}
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="space-y-6">
+            <div className="space-y-4 rounded-2xl border border-border p-4">
+              <div className="space-y-2">
+                <Label htmlFor={keyNameId}>Key name</Label>
+                <Input
+                  id={keyNameId}
+                  value={keyForm.name}
+                  onChange={(event) =>
+                    setKeyForm((current) => ({
+                      ...current,
+                      name: event.target.value,
+                    }))
+                  }
+                  placeholder="Laptop, workstation, deploy key"
+                />
+              </div>
+
+              <div className="space-y-2">
+                <Label htmlFor={keyPublicKeyId}>Public key</Label>
+                <Textarea
+                  id={keyPublicKeyId}
+                  value={keyForm.public_key}
+                  onChange={(event) =>
+                    setKeyForm((current) => ({
+                      ...current,
+                      public_key: event.target.value,
+                    }))
+                  }
+                  placeholder="ssh-ed25519 AAAAC3..."
+                />
+              </div>
+
+              <label className="flex items-center gap-3 rounded-xl border border-border bg-background px-4 py-3 text-sm">
+                <input
+                  type="checkbox"
+                  checked={keyForm.is_active}
+                  onChange={(event) =>
+                    setKeyForm((current) => ({
+                      ...current,
+                      is_active: event.target.checked,
+                    }))
+                  }
+                />
+                Keep this key active for login
+              </label>
+
+              {keyError ? (
+                <p className="text-sm text-destructive">{keyError}</p>
+              ) : null}
+
+              <div className="flex justify-end">
+                <Button
+                  onClick={() => createKeyMutation.mutate()}
+                  disabled={createKeyMutation.isPending || !keysModalUser}
+                >
+                  Add key
+                </Button>
+              </div>
+            </div>
+
+            <div className="rounded-2xl border border-border">
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>Name</TableHead>
+                    <TableHead>Algorithm</TableHead>
+                    <TableHead>Fingerprint</TableHead>
+                    <TableHead>Status</TableHead>
+                    <TableHead className="text-right">Action</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {keysQuery.data?.map((key) => (
+                    <TableRow key={key.id}>
+                      <TableCell>
+                        <div>
+                          <p className="font-medium">{key.name}</p>
+                          <p className="text-xs text-muted-foreground">
+                            {key.comment}
+                          </p>
+                        </div>
+                      </TableCell>
+                      <TableCell>{key.algorithm}</TableCell>
+                      <TableCell className="font-mono text-xs">
+                        {key.fingerprint}
+                      </TableCell>
+                      <TableCell>
+                        <Badge tone={key.is_active ? "success" : "muted"}>
+                          {key.is_active ? "active" : "inactive"}
+                        </Badge>
+                      </TableCell>
+                      <TableCell className="text-right">
+                        <Button
+                          variant="ghost"
+                          onClick={() => setDeleteKeyTarget(key)}
+                          aria-label={`Delete ${key.name}`}
+                        >
+                          <Trash2 className="h-4 w-4" />
+                        </Button>
+                      </TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+              {!keysQuery.data?.length ? (
+                <p className="p-6 text-sm text-muted-foreground">
+                  No SSH keys uploaded for this user yet.
+                </p>
+              ) : null}
+            </div>
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      <ConfirmDialog
+        open={deleteUserTarget !== null}
+        title="Delete user?"
+        description={
+          deleteUserTarget
+            ? `This will permanently delete ${
+                deleteUserTarget.display_name || deleteUserTarget.email
+              } and remove all of their SSH keys.`
+            : ""
+        }
+        confirmLabel="Delete user"
+        isPending={deleteUserMutation.isPending}
+        onOpenChange={(open) => {
+          if (!open) {
+            setDeleteUserTarget(null);
+          }
+        }}
+        onConfirm={() => {
+          if (deleteUserTarget) {
+            deleteUserMutation.mutate(deleteUserTarget.id);
+          }
+        }}
+      />
+
+      <ConfirmDialog
+        open={deleteKeyTarget !== null}
+        title="Delete SSH key?"
+        description={
+          deleteKeyTarget
+            ? `This will remove ${deleteKeyTarget.name} from this user.`
+            : ""
+        }
+        confirmLabel="Delete key"
+        isPending={deleteKeyMutation.isPending}
+        onOpenChange={(open) => {
+          if (!open) {
+            setDeleteKeyTarget(null);
+          }
+        }}
+        onConfirm={() => {
+          if (deleteKeyTarget) {
+            deleteKeyMutation.mutate(deleteKeyTarget.id);
+          }
+        }}
+      />
+
       <div>
         <Card>
           <CardContent className="p-0">
@@ -242,53 +508,75 @@ export default function AdminUsersPage() {
                   <TableHead>Email</TableHead>
                   <TableHead>Role</TableHead>
                   <TableHead>Status</TableHead>
-                  <TableHead className="w-16 text-right"></TableHead>
+                  <TableHead className="w-40 text-right">Actions</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {usersQuery.data?.map((user) => (
-                  <TableRow key={user.id}>
-                    <TableCell>
-                      <div className="flex items-center gap-3">
-                        <Shield className="h-4 w-4 shrink-0" />
-                        <div className="flex items-center gap-2">
-                          <p className="font-medium">
-                            {user.display_name || user.email.split("@")[0]}
-                          </p>
-                          {user.email === currentUser?.email ? (
-                            <span className="rounded-full border border-border px-2 py-0.5 text-xs">
-                              You
-                            </span>
-                          ) : null}
+                {usersQuery.data?.map((user) => {
+                  const isCurrentUser = user.email === currentUser?.email;
+                  return (
+                    <TableRow key={user.id}>
+                      <TableCell>
+                        <div className="flex items-center gap-3">
+                          <Shield className="h-4 w-4 shrink-0" />
+                          <div className="flex items-center gap-2">
+                            <p className="font-medium">
+                              {user.display_name || user.email.split("@")[0]}
+                            </p>
+                            {isCurrentUser ? (
+                              <span className="rounded-full border border-border px-2 py-0.5 text-xs">
+                                You
+                              </span>
+                            ) : null}
+                          </div>
                         </div>
-                      </div>
-                    </TableCell>
-                    <TableCell>
-                      <span className="text-muted-foreground">
-                        {user.email}
-                      </span>
-                    </TableCell>
-                    <TableCell>
-                      <Badge tone={user.role === "admin" ? "success" : "muted"}>
-                        {user.role}
-                      </Badge>
-                    </TableCell>
-                    <TableCell>
-                      <Badge tone={user.is_active ? "success" : "muted"}>
-                        {user.is_active ? "active" : "disabled"}
-                      </Badge>
-                    </TableCell>
-                    <TableCell className="text-right">
-                      <Button
-                        variant="ghost"
-                        onClick={() => startEdit(user)}
-                        aria-label="Edit user"
-                      >
-                        ...
-                      </Button>
-                    </TableCell>
-                  </TableRow>
-                ))}
+                      </TableCell>
+                      <TableCell>
+                        <span className="text-muted-foreground">
+                          {user.email}
+                        </span>
+                      </TableCell>
+                      <TableCell>
+                        <Badge
+                          tone={user.role === "admin" ? "success" : "muted"}
+                        >
+                          {user.role}
+                        </Badge>
+                      </TableCell>
+                      <TableCell>
+                        <Badge tone={user.is_active ? "success" : "muted"}>
+                          {user.is_active ? "active" : "disabled"}
+                        </Badge>
+                      </TableCell>
+                      <TableCell className="text-right">
+                        <div className="flex justify-end gap-2">
+                          <Button
+                            variant="ghost"
+                            onClick={() => openKeysModal(user)}
+                            aria-label={`Manage keys for ${user.email}`}
+                          >
+                            <KeyRound className="h-4 w-4" />
+                          </Button>
+                          <Button
+                            variant="ghost"
+                            onClick={() => startEdit(user)}
+                            aria-label={`Edit ${user.email}`}
+                          >
+                            Edit
+                          </Button>
+                          <Button
+                            variant="ghost"
+                            onClick={() => setDeleteUserTarget(user)}
+                            aria-label={`Delete ${user.email}`}
+                            disabled={isCurrentUser}
+                          >
+                            <Trash2 className="h-4 w-4" />
+                          </Button>
+                        </div>
+                      </TableCell>
+                    </TableRow>
+                  );
+                })}
               </TableBody>
             </Table>
             {!usersQuery.data?.length ? (

@@ -170,7 +170,8 @@ func userIDFromConn(conn *ssh.ServerConn) (uint, error) {
 func (s *Server) lookupTarget(userID uint, slug string) (*upstreamTarget, error) {
 	var instance models.Instance
 	err := s.db.
-		Where("assigned_user_id = ? AND slug = ? AND enabled = ?", userID, slug, true).
+		Joins("JOIN instance_assignments ON instance_assignments.instance_id = instances.id").
+		Where("instance_assignments.user_id = ? AND instances.slug = ? AND instances.enabled = ?", userID, slug, true).
 		First(&instance).Error
 	if err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {

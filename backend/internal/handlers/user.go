@@ -39,7 +39,8 @@ func (h *UserHandler) ListInstances(c *gin.Context) {
 
 	var instances []models.Instance
 	if err := h.db.
-		Where("assigned_user_id = ? AND enabled = ?", user.ID, true).
+		Joins("JOIN instance_assignments ON instance_assignments.instance_id = instances.id").
+		Where("instance_assignments.user_id = ? AND instances.enabled = ?", user.ID, true).
 		Order("name asc").
 		Find(&instances).Error; err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})

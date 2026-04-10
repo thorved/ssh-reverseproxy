@@ -12,8 +12,8 @@ export type Instance = {
   name: string;
   slug: string;
   description: string;
-  assigned_user_id?: number | null;
-  assigned_user?: User | null;
+  assigned_user_ids: number[];
+  assigned_users: User[];
   upstream_host: string;
   upstream_port: number;
   upstream_user: string;
@@ -43,6 +43,12 @@ export type SSHKey = {
   is_active: boolean;
   created_at: string;
   updated_at: string;
+};
+
+export type SSHKeyPayload = {
+  name: string;
+  public_key: string;
+  is_active: boolean;
 };
 
 function getApiBaseUrl() {
@@ -93,6 +99,21 @@ export const api = {
       method: "PATCH",
       body: JSON.stringify(payload),
     }),
+  deleteUser: (id: number) =>
+    request<{ ok: boolean }>(`/api/admin/users/${id}`, {
+      method: "DELETE",
+    }),
+  listAdminUserSSHKeys: (userId: number) =>
+    request<SSHKey[]>(`/api/admin/users/${userId}/ssh-keys`),
+  createAdminUserSSHKey: (userId: number, payload: SSHKeyPayload) =>
+    request<SSHKey>(`/api/admin/users/${userId}/ssh-keys`, {
+      method: "POST",
+      body: JSON.stringify(payload),
+    }),
+  deleteAdminUserSSHKey: (userId: number, keyId: number) =>
+    request<{ ok: boolean }>(`/api/admin/users/${userId}/ssh-keys/${keyId}`, {
+      method: "DELETE",
+    }),
   listAdminInstances: () => request<Instance[]>("/api/admin/instances"),
   createInstance: (payload: Record<string, unknown>) =>
     request<Instance>("/api/admin/instances", {
@@ -104,20 +125,19 @@ export const api = {
       method: "PATCH",
       body: JSON.stringify(payload),
     }),
-  assignInstance: (id: number, userId: number | null) =>
-    request<Instance>(`/api/admin/instances/${id}/assign`, {
-      method: "POST",
-      body: JSON.stringify({ user_id: userId }),
+  deleteInstance: (id: number) =>
+    request<{ ok: boolean }>(`/api/admin/instances/${id}`, {
+      method: "DELETE",
     }),
   listUserInstances: () =>
     request<UserInstancesResponse>("/api/user/instances"),
   listSSHKeys: () => request<SSHKey[]>("/api/user/ssh-keys"),
-  createSSHKey: (payload: Record<string, unknown>) =>
+  createSSHKey: (payload: SSHKeyPayload) =>
     request<SSHKey>("/api/user/ssh-keys", {
       method: "POST",
       body: JSON.stringify(payload),
     }),
-  updateSSHKey: (id: number, payload: Record<string, unknown>) =>
+  updateSSHKey: (id: number, payload: SSHKeyPayload) =>
     request<SSHKey>(`/api/user/ssh-keys/${id}`, {
       method: "PATCH",
       body: JSON.stringify(payload),

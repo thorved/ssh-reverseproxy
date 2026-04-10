@@ -40,10 +40,14 @@ func NewRouter(cfg config.Config, db *gorm.DB, authService *auth.Service) *gin.E
 			admin.GET("/users", adminHandler.ListUsers)
 			admin.POST("/users", adminHandler.CreateUser)
 			admin.PATCH("/users/:id", adminHandler.UpdateUser)
+			admin.DELETE("/users/:id", adminHandler.DeleteUser)
+			admin.GET("/users/:id/ssh-keys", adminHandler.ListUserSSHKeys)
+			admin.POST("/users/:id/ssh-keys", adminHandler.CreateUserSSHKey)
+			admin.DELETE("/users/:id/ssh-keys/:keyId", adminHandler.DeleteUserSSHKey)
 			admin.GET("/instances", adminHandler.ListInstances)
 			admin.POST("/instances", adminHandler.CreateInstance)
 			admin.PATCH("/instances/:id", adminHandler.UpdateInstance)
-			admin.POST("/instances/:id/assign", adminHandler.AssignInstance)
+			admin.DELETE("/instances/:id", adminHandler.DeleteInstance)
 		}
 
 		user := api.Group("/user")

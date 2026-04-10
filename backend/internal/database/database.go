@@ -35,6 +35,7 @@ func Migrate(db *gorm.DB) error {
 		&models.User{},
 		&models.SSHKey{},
 		&models.Instance{},
+		&models.InstanceAssignment{},
 		&models.Session{},
 	); err != nil {
 		return err
@@ -71,7 +72,6 @@ func Migrate(db *gorm.DB) error {
 				"Name",
 				"Slug",
 				"Description",
-				"AssignedUserID",
 				"UpstreamHost",
 				"UpstreamPort",
 				"UpstreamUser",
@@ -80,6 +80,14 @@ func Migrate(db *gorm.DB) error {
 				"AuthKeyInline",
 				"AuthPassphrase",
 				"Enabled",
+			},
+		},
+		{
+			model: &models.InstanceAssignment{},
+			fields: []string{
+				"InstanceID",
+				"UserID",
+				"CreatedAt",
 			},
 		},
 		{

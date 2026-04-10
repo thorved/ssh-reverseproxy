@@ -1,12 +1,13 @@
 "use client";
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Plus } from "lucide-react";
+import { Plus, Trash2, Users } from "lucide-react";
 import { useId, useState } from "react";
 import { PageHeader } from "@/components/layout/page-header";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
+import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import {
   Dialog,
   DialogContent,
@@ -41,7 +42,7 @@ type InstanceFormState = {
   auth_password: string;
   auth_key_inline: string;
   auth_passphrase: string;
-  assigned_user_id: number | null;
+  assigned_user_ids: number[];
   enabled: boolean;
 };
 
@@ -57,7 +58,7 @@ const emptyState: InstanceFormState = {
   auth_password: "",
   auth_key_inline: "",
   auth_passphrase: "",
-  assigned_user_id: null,
+  assigned_user_ids: [],
   enabled: true,
 };
 
@@ -69,7 +70,6 @@ export default function AdminInstancesPage() {
   const portId = useId();
   const upstreamUserId = useId();
   const authMethodId = useId();
-  const assignedUserId = useId();
   const authPasswordId = useId();
   const authKeyId = useId();
   const authPassphraseId = useId();
@@ -86,12 +86,13 @@ export default function AdminInstancesPage() {
   const [form, setForm] = useState<InstanceFormState>(emptyState);
   const [error, setError] = useState<string | null>(null);
   const [isModalOpen, setIsModalOpen] = useState(false);
+  const [deleteTarget, setDeleteTarget] = useState<Instance | null>(null);
 
   const saveMutation = useMutation({
     mutationFn: async (payload: InstanceFormState) => {
       const requestBody = {
         ...payload,
-        assigned_user_id: payload.assigned_user_id,
+        assigned_user_ids: payload.assigned_user_ids,
       };
       if (payload.id) {
         return api.updateInstance(payload.id, requestBody);
@@ -111,10 +112,10 @@ export default function AdminInstancesPage() {
     },
   });
 
-  const assignMutation = useMutation({
-    mutationFn: ({ id, userId }: { id: number; userId: number | null }) =>
-      api.assignInstance(id, userId),
+  const deleteMutation = useMutation({
+    mutationFn: (instanceId: number) => api.deleteInstance(instanceId),
     onSuccess: () => {
+      setDeleteTarget(null);
       void queryClient.invalidateQueries({ queryKey: ["admin-instances"] });
     },
   });
@@ -132,11 +133,20 @@ export default function AdminInstancesPage() {
       auth_password: instance.auth_password ?? "",
       auth_key_inline: instance.auth_key_inline ?? "",
       auth_passphrase: instance.auth_passphrase ?? "",
-      assigned_user_id: instance.assigned_user_id ?? null,
+      assigned_user_ids: instance.assigned_user_ids ?? [],
       enabled: instance.enabled,
     });
     setError(null);
     setIsModalOpen(true);
+  };
+
+  const toggleAssignedUser = (userId: number, checked: boolean) => {
+    setForm((current) => ({
+      ...current,
+      assigned_user_ids: checked
+        ? [...current.assigned_user_ids, userId]
+        : current.assigned_user_ids.filter((value) => value !== userId),
+    }));
   };
 
   return (
@@ -144,7 +154,7 @@ export default function AdminInstancesPage() {
       <PageHeader
         eyebrow="Administration"
         title="Instances"
-        description="Define upstream SSH targets, keep their auth material in SQLite, and assign each instance to exactly one user."
+        description="Define upstream SSH targets, keep their auth material in SQLite, and assign each instance to multiple users when needed."
         actions={
           <Button
             onClick={() => {
@@ -166,7 +176,6 @@ export default function AdminInstancesPage() {
           if (open) {
             return;
           }
-          setIsModalOpen(false);
           setForm(emptyState);
           setError(null);
         }}
@@ -177,8 +186,8 @@ export default function AdminInstancesPage() {
               {form.id ? "Edit instance" : "Create instance"}
             </DialogTitle>
             <DialogDescription>
-              Manage upstream targets, routing slug, and assignment in one
-              place.
+              Manage upstream targets, routing slug, and which users can connect
+              to this instance.
             </DialogDescription>
           </DialogHeader>
 
@@ -272,26 +281,43 @@ export default function AdminInstancesPage() {
                 />
               </div>
               <div className="space-y-2">
-                <Label htmlFor={assignedUserId}>Assigned user</Label>
-                <Select
-                  id={assignedUserId}
-                  value={form.assigned_user_id?.toString() ?? ""}
-                  onChange={(event) =>
-                    setForm((current) => ({
-                      ...current,
-                      assigned_user_id: event.target.value
-                        ? Number(event.target.value)
-                        : null,
-                    }))
-                  }
-                >
-                  <option value="">Unassigned</option>
-                  {usersQuery.data?.map((user) => (
-                    <option key={user.id} value={user.id}>
-                      {user.display_name || user.email}
-                    </option>
-                  ))}
-                </Select>
+                <Label>User access</Label>
+                <div className="rounded-2xl border border-border bg-background/55 p-4">
+                  <div className="mb-3 flex items-center gap-2 text-sm font-medium">
+                    <Users className="h-4 w-4" />
+                    Select one or more users
+                  </div>
+                  <div className="max-h-48 space-y-2 overflow-y-auto">
+                    {usersQuery.data?.map((user) => {
+                      const checked = form.assigned_user_ids.includes(user.id);
+                      return (
+                        <label
+                          key={user.id}
+                          className="flex items-center gap-3 rounded-xl border border-border px-3 py-2 text-sm"
+                        >
+                          <input
+                            type="checkbox"
+                            checked={checked}
+                            onChange={(event) =>
+                              toggleAssignedUser(user.id, event.target.checked)
+                            }
+                          />
+                          <span className="font-medium">
+                            {user.display_name || user.email}
+                          </span>
+                          <span className="text-xs text-muted-foreground">
+                            {user.email}
+                          </span>
+                        </label>
+                      );
+                    })}
+                    {!usersQuery.data?.length ? (
+                      <p className="text-sm text-muted-foreground">
+                        Create users first to assign access.
+                      </p>
+                    ) : null}
+                  </div>
+                </div>
               </div>
             </div>
 
@@ -401,6 +427,28 @@ export default function AdminInstancesPage() {
         </DialogContent>
       </Dialog>
 
+      <ConfirmDialog
+        open={deleteTarget !== null}
+        title="Delete instance?"
+        description={
+          deleteTarget
+            ? `This will permanently delete ${deleteTarget.name} and remove every user assignment for it.`
+            : ""
+        }
+        confirmLabel="Delete instance"
+        isPending={deleteMutation.isPending}
+        onOpenChange={(open) => {
+          if (!open) {
+            setDeleteTarget(null);
+          }
+        }}
+        onConfirm={() => {
+          if (deleteTarget) {
+            deleteMutation.mutate(deleteTarget.id);
+          }
+        }}
+      />
+
       <div>
         <Card>
           <CardContent className="p-0">
@@ -409,7 +457,7 @@ export default function AdminInstancesPage() {
                 <TableRow>
                   <TableHead>Instance</TableHead>
                   <TableHead>Upstream</TableHead>
-                  <TableHead>Assignment</TableHead>
+                  <TableHead>Assigned users</TableHead>
                   <TableHead>Status</TableHead>
                   <TableHead className="text-right">Action</TableHead>
                 </TableRow>
@@ -430,29 +478,16 @@ export default function AdminInstancesPage() {
                       {instance.upstream_port}
                     </TableCell>
                     <TableCell>
-                      <div className="flex items-center gap-2">
-                        <Badge
-                          tone={instance.assigned_user ? "success" : "muted"}
-                        >
-                          {instance.assigned_user?.display_name ||
-                            instance.assigned_user?.email ||
-                            "unassigned"}
-                        </Badge>
-                        <Button
-                          variant="ghost"
-                          onClick={() =>
-                            assignMutation.mutate({
-                              id: instance.id,
-                              userId: null,
-                            })
-                          }
-                          disabled={
-                            !instance.assigned_user_id ||
-                            assignMutation.isPending
-                          }
-                        >
-                          Clear
-                        </Button>
+                      <div className="flex flex-wrap gap-2">
+                        {instance.assigned_users.length ? (
+                          instance.assigned_users.map((user) => (
+                            <Badge key={user.id} tone="success">
+                              {user.display_name || user.email}
+                            </Badge>
+                          ))
+                        ) : (
+                          <Badge tone="muted">unassigned</Badge>
+                        )}
                       </div>
                     </TableCell>
                     <TableCell>
@@ -461,17 +496,31 @@ export default function AdminInstancesPage() {
                       </Badge>
                     </TableCell>
                     <TableCell className="text-right">
-                      <Button
-                        variant="ghost"
-                        onClick={() => startEdit(instance)}
-                      >
-                        Edit
-                      </Button>
+                      <div className="flex justify-end gap-2">
+                        <Button
+                          variant="ghost"
+                          onClick={() => startEdit(instance)}
+                        >
+                          Edit
+                        </Button>
+                        <Button
+                          variant="ghost"
+                          onClick={() => setDeleteTarget(instance)}
+                          aria-label={`Delete ${instance.name}`}
+                        >
+                          <Trash2 className="h-4 w-4" />
+                        </Button>
+                      </div>
                     </TableCell>
                   </TableRow>
                 ))}
               </TableBody>
             </Table>
+            {!instancesQuery.data?.length ? (
+              <div className="p-6 text-sm text-muted-foreground">
+                No instances yet.
+              </div>
+            ) : null}
           </CardContent>
         </Card>
       </div>
