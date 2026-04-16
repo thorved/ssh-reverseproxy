@@ -338,7 +338,7 @@ export default function AdminUsersPage() {
             </DialogDescription>
           </DialogHeader>
 
-          <div className="space-y-6">
+          <div className="space-y-6 overflow-x-hidden">
             <div className="space-y-4 rounded-2xl border border-border p-4">
               <div className="space-y-2">
                 <Label htmlFor={keyNameId}>Key name</Label>
@@ -398,55 +398,63 @@ export default function AdminUsersPage() {
               </div>
             </div>
 
-            <div className="rounded-2xl border border-border">
-              <Table>
-                <TableHeader>
-                  <TableRow>
-                    <TableHead>Name</TableHead>
-                    <TableHead>Algorithm</TableHead>
-                    <TableHead>Fingerprint</TableHead>
-                    <TableHead>Status</TableHead>
-                    <TableHead className="text-right">Action</TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {keysQuery.data?.map((key) => (
-                    <TableRow key={key.id}>
-                      <TableCell>
-                        <div>
-                          <p className="font-medium">{key.name}</p>
-                          <p className="text-xs text-muted-foreground">
-                            {key.comment}
-                          </p>
-                        </div>
-                      </TableCell>
-                      <TableCell>{key.algorithm}</TableCell>
-                      <TableCell className="font-mono text-xs">
-                        {key.fingerprint}
-                      </TableCell>
-                      <TableCell>
+            <div className="space-y-3 rounded-2xl border border-border p-3 sm:p-4">
+              {keysQuery.data?.length ? (
+                keysQuery.data.map((key) => (
+                  <div
+                    key={key.id}
+                    className="space-y-4 rounded-2xl border border-border bg-muted/20 p-4"
+                  >
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="min-w-0 space-y-1">
+                        <p className="font-medium break-words">{key.name}</p>
+                        <p className="break-words text-xs text-muted-foreground">
+                          {key.comment || "No comment"}
+                        </p>
+                      </div>
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => setDeleteKeyTarget(key)}
+                        aria-label={`Delete ${key.name}`}
+                      >
+                        <Trash2 className="h-4 w-4" />
+                      </Button>
+                    </div>
+
+                    <div className="grid gap-4 sm:grid-cols-[minmax(0,140px)_minmax(0,1fr)_auto]">
+                      <div className="min-w-0 space-y-1">
+                        <p className="text-xs font-semibold uppercase tracking-[0.16em] text-muted-foreground">
+                          Algorithm
+                        </p>
+                        <p className="break-words text-sm">{key.algorithm}</p>
+                      </div>
+
+                      <div className="min-w-0 space-y-1">
+                        <p className="text-xs font-semibold uppercase tracking-[0.16em] text-muted-foreground">
+                          Fingerprint
+                        </p>
+                        <p className="break-all font-mono text-xs leading-5 text-foreground/90">
+                          {key.fingerprint}
+                        </p>
+                      </div>
+
+                      <div className="min-w-0 space-y-1">
+                        <p className="text-xs font-semibold uppercase tracking-[0.16em] text-muted-foreground">
+                          Status
+                        </p>
                         <Badge tone={key.is_active ? "success" : "muted"}>
                           {key.is_active ? "active" : "inactive"}
                         </Badge>
-                      </TableCell>
-                      <TableCell className="text-right">
-                        <Button
-                          variant="ghost"
-                          onClick={() => setDeleteKeyTarget(key)}
-                          aria-label={`Delete ${key.name}`}
-                        >
-                          <Trash2 className="h-4 w-4" />
-                        </Button>
-                      </TableCell>
-                    </TableRow>
-                  ))}
-                </TableBody>
-              </Table>
-              {!keysQuery.data?.length ? (
-                <p className="p-6 text-sm text-muted-foreground">
+                      </div>
+                    </div>
+                  </div>
+                ))
+              ) : (
+                <p className="p-2 text-sm text-muted-foreground">
                   No SSH keys uploaded for this user yet.
                 </p>
-              ) : null}
+              )}
             </div>
           </div>
         </DialogContent>
